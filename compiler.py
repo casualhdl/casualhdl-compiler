@@ -18,7 +18,7 @@ def parse_procedures(tokens):
 	registered.
 	'''
 
-	
+	return tokens
 
 
 def build_ports_vhdl(ports):
