@@ -27,7 +27,7 @@ def tokenize(filename, verbose=False):
     lines = read_lines(filename)
     # setup response structure
     tokens = {}
-    tokens['includes'] = []
+    tokens['components'] = []
     tokens['ports'] = {}
     tokens['ports']['clocks'] = []
     tokens['ports']['resets'] = []
@@ -42,22 +42,34 @@ def tokenize(filename, verbose=False):
         line = preprocess(lines[i])
 
         if verbose:
-            print("Line %i  \t%s" % (i, line))
+            print("%i  \t%s" % (i, line))
 
         if '\t' in line:
             # todo: throw error
             pass
+
+        if line.strip() == '':
+            i += 1
+            if i == len(lines):
+                eof = True
+                break
+            continue
 
         parts = line.split(' ')
         cmd = parts[0]
         
         if cmd == 'library':
             # library chdl.basic
+
             if len(parts) == 2:
                 tokens['library'] = parts[1]
             else:
                 # todo: throw error
                 pass
+
+            if verbose:
+                print("<tokenizer> Found library: '%s'" % parts[1])
+
         elif cmd == 'entity':
             # entity counter32
             if len(parts) == 2:
@@ -65,6 +77,10 @@ def tokenize(filename, verbose=False):
             else:
                 # todo: throw error
                 pass
+
+            if verbose:
+                print("<tokenizer> Found entity: '%s'" % parts[1])
+
         elif cmd == 'port':
             # port pulse = logic()
             # port count_max = vector()
@@ -136,6 +152,10 @@ def tokenize(filename, verbose=False):
             else:
                 # todo: throw error
                 pass
+
+            if verbose:
+                print("<tokenizer> Found port: '%s' of type '%s'" % (parts[1], rest_parts[0]) )
+
         elif cmd == 'component':
             # component chdl.basic.counter32 as my_counter
             if len(parts) >= 4:
@@ -149,6 +169,10 @@ def tokenize(filename, verbose=False):
             else:
                 # todo: throw error
                 pass
+
+            if verbose:
+                print("<tokenizer> Found component: '%s' as '%s'" % (library, name)) 
+
         elif cmd == 'var':
             # var counter = slv(31, 0)
             if len(parts) >= 4:
@@ -156,7 +180,7 @@ def tokenize(filename, verbose=False):
                 equals = parts[2]
                 rest = ' '.join(parts[3:])
                 rest_parts = rest.replace(' ','').split('(')
-                if rest_parts[0] == 'sl':
+                if rest_parts[0] == 'logic':
                     if len(rest_parts) == 1:
                         # todo: throw error
                         pass
@@ -168,7 +192,7 @@ def tokenize(filename, verbose=False):
                             'name': name,
                             'type': 'std_logic',
                         })
-                elif rest_parts[0] == 'slv':
+                elif rest_parts[0] == 'vector':
                     if len(rest_parts) == 1:
                         # todo: throw error
                         pass
@@ -200,6 +224,10 @@ def tokenize(filename, verbose=False):
             else:
                 # todo: throw error
                 pass
+
+            if verbose:
+                print("<tokenizer> Found variable: '%s' of type '%s'" % (name, rest_parts[0])) 
+
         elif cmd == 'proc':
             # proc counter_decode = sync(clk, reset):
             #     if reset_count = '1' then
@@ -234,13 +262,14 @@ def tokenize(filename, verbose=False):
                 clock = inside.split(',')[0].strip()
                 reset = inside.split(',')[1].strip()
             elif proc_type == 'async':
+                clock = None
                 reset = inside.split(',')[0].strip()
             else:
                 # todo: throw error
                 pass
 
-            #if verbose:
-            #    print("Found Process: %s" % name)
+            if verbose:
+                print("<tokenizer> Start of process: '%s'" % name)
 
             proc['name'] = name
             proc['proc_type'] = proc_type
@@ -249,17 +278,25 @@ def tokenize(filename, verbose=False):
 
             first_line = True
             while True:
+
                 if verbose:
-                    print("Line %i  \t%s" % (i, line))
-                #print(i, line)
-                if line[:4] == '    ':
-                    proc['lines'].append(line[4:])
-                else:
-                    # all done with proc
-                    if first_line:
-                        # todo: throw error
-                        pass
-                    break
+                    print("%i  \t-%s" % (i, line))
+
+                if line != '':
+                    if line[:4] == '    ':
+                        proc['lines'].append(line[4:])
+                    else:
+                        # all done with proc
+                        if first_line:
+                            # todo: throw error
+                            pass
+                        if verbose:
+                            print("<tokenizer> End of process: '%s'" % name)
+                        # need to back up a line, in case this isn't the end of
+                        # the file, and there is another proc below us
+                        i -= 1
+                        break
+
                 if (i+1) != len(lines):
                     i += 1
                     line = preprocess(lines[i], whitespace=True)
@@ -278,6 +315,9 @@ def tokenize(filename, verbose=False):
         if i == len(lines):
             eof = True
             break
+
+    if verbose:
+        print(json.dumps(tokens, indent=3))
 
     return tokens
         

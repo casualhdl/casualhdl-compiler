@@ -10,14 +10,17 @@ entity counter32
 port clk = clock()
 port reset = reset()    
 port reset_count = logic()
-port count_max = vector()
-port count_done = logic()
-port reset_counter = vector(31, 0)
+port max = vector()
+port done = logic()
+#port reset_counter = vector(31, 0)
 
-var reset_count_reg = logic()
+#var reset_count_reg = logic()
 var count = vector(count_max'left, count_max'right)
 
 proc counter_decode = sync(clk, reset):
+    reset:
+        count = zeros
+
     if reset_count = '1' then
         count = zeros
     elsif count = count_max then
@@ -26,9 +29,15 @@ proc counter_decode = sync(clk, reset):
         count++
     end if
 
-proc reset_count_register = sync(clk, reset):
-    reset_count_reg <= reset_count
+#proc reset_count_register = sync(clk, reset):
+#    reset:
+#        reset_count_reg <= 0
+#
+#    reset_count_reg <= reset_count
 
-proc reset_counter = sync(clk, reset):
-     if rest_count = '1' and reset_count_reg = '0':
-         reset_counter++
+#proc reset_counter = sync(clk, reset):
+#     reset:
+#        reset_counter = 0
+#     
+#    if rest_count = '1' and reset_count_reg = '0':
+#        reset_counter++
