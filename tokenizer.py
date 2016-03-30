@@ -1,4 +1,12 @@
 
+from log import (
+    log,
+    INFO,
+    WARNING,
+    ERROR,
+    DEBUG,
+    TOKENIZER,
+)
 import json
 
 def read_lines(filename):
@@ -15,12 +23,12 @@ def get_indent(line):
             break
     return indent
 
-def preprocess(line, whitespace=False):
+def preprocess(i, line, whitespace=False):
     # remove comments and whitespace
     line = line.split('#')[0]
     if not whitespace:
         line = line.strip()
-    return line
+    return {'line_number': i, 'line': line}
 
 def tokenize(filename, verbose=False):
     # read file
@@ -39,23 +47,23 @@ def tokenize(filename, verbose=False):
     i = 0;
     while not eof:
         
-        line = preprocess(lines[i])
+        line = preprocess(i, lines[i])
 
-        if verbose:
-            print("%i  \t%s" % (i, line))
+        log(TOKENIZER, DEBUG, "%i  \t%s" % (i, line['line']))
 
         if '\t' in line:
             # todo: throw error
             pass
 
-        if line.strip() == '':
+        if line['line'].strip() == '':
             i += 1
             if i == len(lines):
                 eof = True
+                log(TOKENIZER, INFO, 'reached end of file.')
                 break
             continue
 
-        parts = line.split(' ')
+        parts = line['line'].split(' ')
         cmd = parts[0]
         
         if cmd == 'library':
@@ -67,8 +75,7 @@ def tokenize(filename, verbose=False):
                 # todo: throw error
                 pass
 
-            if verbose:
-                print("<tokenizer> Found library: '%s'" % parts[1])
+            log(TOKENIZER, INFO, "found library: '%s'" % parts[1])
 
         elif cmd == 'entity':
             # entity counter32
@@ -78,11 +85,10 @@ def tokenize(filename, verbose=False):
                 # todo: throw error
                 pass
 
-            if verbose:
-                print("<tokenizer> Found entity: '%s'" % parts[1])
+            log(TOKENIZER, INFO, "found entity: '%s'" % parts[1])
 
         elif cmd == 'port':
-            # port pulse = logic()
+            # port pulse = bit()
             # port count_max = vector()
             # port count_max = vector(31, 0)
             if len(parts) >= 4:
@@ -108,7 +114,7 @@ def tokenize(filename, verbose=False):
                         pass
                     else:
                         tokens['ports']['resets'].append(name)
-                elif rest_parts[0] == 'logic':
+                elif rest_parts[0] == 'bit':
                     if len(rest_parts) == 1:
                         # todo: throw error
                         pass
@@ -121,28 +127,24 @@ def tokenize(filename, verbose=False):
                             'type': 'std_logic',
                         })
                 elif rest_parts[0] == 'vector':
+                    log(TOKENIZER, DEBUG, 'port, vector found.')
+                    log(TOKENIZER, DEBUG, rest_parts)
                     if len(rest_parts) == 1:
                         # todo: throw error
                         pass
-                    #elif rest_parts[1] != ')':
-                    #    # todo: throw error
-                    #    pass
+                    # we do not (yet) support non-dimensioned vectors 
+                    elif rest_parts[1] == ')':
+                        # todo: throw error
+                        pass
                     else:
-                        # test for slv()
-                        if rest_parts[1] == ')':
-                            norange = True
-                            left = None
-                            right = None
-                        # else, slv(left, right)
-                        else:
-                            norange = False
-                            inside = rest.split('(')[1].split(')')[0]
-                            left = inside.split(',')[0].strip()
-                            right = inside.split(',')[1].strip()
+                        
+                        inside = rest.split('(')[1].split(')')[0]
+                        left = inside.split(',')[0].strip()
+                        right = inside.split(',')[1].strip()
+
                         tokens['ports']['signals'].append({
                             'name': name,
                             'type': 'std_logic_vector',
-                            'norange': norange,
                             'left': left,
                             'right': right,
                         })
@@ -153,8 +155,7 @@ def tokenize(filename, verbose=False):
                 # todo: throw error
                 pass
 
-            if verbose:
-                print("<tokenizer> Found port: '%s' of type '%s'" % (parts[1], rest_parts[0]) )
+            log(TOKENIZER, INFO, "found port: '%s' of type '%s'" % (parts[1], rest_parts[0]) )
 
         elif cmd == 'component':
             # component chdl.basic.counter32 as my_counter
@@ -170,8 +171,7 @@ def tokenize(filename, verbose=False):
                 # todo: throw error
                 pass
 
-            if verbose:
-                print("<tokenizer> Found component: '%s' as '%s'" % (library, name)) 
+            log(TOKENIZER, INFO, "found component: '%s' as '%s'" % (library, name)) 
 
         elif cmd == 'var':
             # var counter = slv(31, 0)
@@ -180,7 +180,7 @@ def tokenize(filename, verbose=False):
                 equals = parts[2]
                 rest = ' '.join(parts[3:])
                 rest_parts = rest.replace(' ','').split('(')
-                if rest_parts[0] == 'logic':
+                if rest_parts[0] == 'bit':
                     if len(rest_parts) == 1:
                         # todo: throw error
                         pass
@@ -202,19 +202,16 @@ def tokenize(filename, verbose=False):
                     else:
                         # test for slv()
                         if rest_parts[1] == ')':
-                            norange = True
                             left = None,
                             right = None,
                         # else, slv(left, right)
                         else:
-                            norange = False
                             inside = rest.split('(')[1].split(')')[0]
                             left = inside.split(',')[0].strip()
                             right = inside.split(',')[1].strip()
                         tokens['vars'].append({
                             'name': name,
                             'type': 'std_logic_vector',
-                            'norange': norange ,
                             'left': left,
                             'right': right,
                         })
@@ -225,8 +222,7 @@ def tokenize(filename, verbose=False):
                 # todo: throw error
                 pass
 
-            if verbose:
-                print("<tokenizer> Found variable: '%s' of type '%s'" % (name, rest_parts[0])) 
+            log(TOKENIZER, INFO, "found variable: '%s' of type '%s'" % (name, rest_parts[0])) 
 
         elif cmd == 'proc':
             # proc counter_decode = sync(clk, reset):
@@ -244,13 +240,12 @@ def tokenize(filename, verbose=False):
 
             if (i+1) != len(lines):
                 i += 1
-                line = preprocess(lines[i], whitespace=True)
+                line = preprocess(i, lines[i], whitespace=True)
             else:
                 # todo: throw error
                 pass
 
-            proc = {}
-            proc['lines'] = []
+            
 
             name = parts[1]
             equals = parts[2]
@@ -268,9 +263,8 @@ def tokenize(filename, verbose=False):
                 # todo: throw error
                 pass
 
-            if verbose:
-                print("<tokenizer> Start of process: '%s'" % name)
-
+            proc = {}
+            proc['lines'] = []
             proc['name'] = name
             proc['proc_type'] = proc_type
             proc['clock'] = clock
@@ -279,19 +273,19 @@ def tokenize(filename, verbose=False):
             first_line = True
             while True:
 
-                if verbose:
-                    print("%i  \t-%s" % (i, line))
+                log(TOKENIZER, DEBUG, "%i  \t>%s" % (i, line['line']))
 
-                if line != '':
-                    if line[:4] == '    ':
-                        proc['lines'].append(line[4:])
+                if line['line'].strip() != '':
+                    if line['line'][:4] == '    ':
+                        #log(TOKENIZER, DEBUG, 'valid line. ( "%s" )' % line['line'])
+                        proc['lines'].append(line)
                     else:
+                        log(TOKENIZER, DEBUG, 'no indent at beginning of line. ( "%s" )' % line['line'])
                         # all done with proc
                         if first_line:
                             # todo: throw error
                             pass
-                        if verbose:
-                            print("<tokenizer> End of process: '%s'" % name)
+                        log(TOKENIZER, DEBUG, "end of process: '%s'" % name)
                         # need to back up a line, in case this isn't the end of
                         # the file, and there is another proc below us
                         i -= 1
@@ -299,12 +293,17 @@ def tokenize(filename, verbose=False):
 
                 if (i+1) != len(lines):
                     i += 1
-                    line = preprocess(lines[i], whitespace=True)
+                    line = preprocess(i, lines[i], whitespace=True)
                 else:
                     # at end of file, must be done with proc ( hopefully )
                     break
                 first_line = False
+
+                #proc['lines'].append(line)
+
             tokens['procedures'].append(proc)
+ 
+            log(TOKENIZER, INFO, "found %s process: '%s' with %i lines" % (proc_type, name, len(proc['lines'])))
 
         else:
             # todo: throw error
@@ -316,12 +315,11 @@ def tokenize(filename, verbose=False):
             eof = True
             break
 
-    if verbose:
-        print(json.dumps(tokens, indent=3))
+    log(TOKENIZER, DEBUG, 'tokenizing results:\n%s' % json.dumps(tokens, indent=4))
 
     return tokens
         
 
 #if __name__ == '__main__':
 #
-#    print(json.dumps(tokenize(read_lines('counter32.chdl'), verbose=True), indent=4))
+#    log(json.dumps(tokenize(read_lines('counter32.chdl'), verbose=True), indent=4))

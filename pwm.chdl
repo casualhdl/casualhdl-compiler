@@ -12,10 +12,10 @@ component chdl.basic.counter32 as low_counter
 
 port clk = clock()
 port reset = reset()
-port enable = logic()
-port high_time = vector()
-port low_time = vector()
-port output = logic()
+port enable = bit()
+port high_time = vector(31,0)
+port low_time = vector(31,0)
+port output = bit()
 
 proc high_low_time_assignment = async(reset):
     high_counter.max = high_time
@@ -34,10 +34,12 @@ proc state_machine = sync(clk, reset):
             low_counter.reset_count = 1
             state = high
         high:
+            output = 1
             if high_counter.done:
                 low_counter.reset_count = 1
                 state = low
         low:
+            output = 0
             if low_counter.done:
                 high_counter.reset_count = 1
                 state = high
