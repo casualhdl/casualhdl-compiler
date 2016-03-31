@@ -10,6 +10,8 @@ from log import (
 
 import json
 import re
+import sys
+import time
 
 from tokenizer import tokenize
 
@@ -48,6 +50,11 @@ def zero_extend(value, width):
 def decode_assignment_value(value, signal):
 
     log(COMPILER, INFO, 'decoding assignment. value = "%s", signal type = "%s"' % (value, signal['type']))
+
+    #
+    # TODO: look for period, and then go find the type of the signal since
+    #       we're assigning something to a component instantiation
+    #
 
     if signal['type'] == 'std_logic_vector':
         # get total width of vector
@@ -88,6 +95,7 @@ def signal_from_name(name, ports, _vars):
     # before we know what to do with it.
     found = False
     signal = None
+    _assignment = None
     for _signal in ports['signals']:
         #log(_signal)
         if name == _signal['name']:
@@ -95,6 +103,7 @@ def signal_from_name(name, ports, _vars):
             assignment_type = 'port'
             found = True
             signal = _signal
+            _assignment = '%s_o <= %s_s;' % (_signal['name'], _signal['name'])
             break
         
     if not found:
@@ -111,7 +120,7 @@ def signal_from_name(name, ports, _vars):
         raise Exception('bad')
         pass
 
-    return signal, assignment_type
+    return signal, assignment_type, _assignment
 
 def process_assignment(line, ports, _vars):
 
@@ -121,31 +130,34 @@ def process_assignment(line, ports, _vars):
 
     log(COMPILER, DEBUG, 'decoding assignment, name: `%s`, value: `%s`' % (name, value))
 
-    #print(name, value)
-
     _signal = None
-    _assignment = None
+    _line = None
 
-    signal, assignment_type = signal_from_name(name, ports, _vars)
+    # dummy because we're doing it below
+    signal, assignment_type, _assignment = signal_from_name(name, ports, _vars)
 
     # it's a port.
     # we need to create a signal, and an assignment so
     # the output is registered
     if assignment_type == 'port':
 
-
         value = decode_assignment_value(value, signal)
 
         signal_name = '%s_s' % name
-        _signal = {
-            'name': signal_name,
-            'type': signal['type'],
-        }
+        #_signal = {
+        #    'name': signal_name,
+        #    'type': signal['type'],
+        #}
+        _signal = signal
+        signal.update(
+            name='%s_s' % signal['name'],
+        )
 
-        _assignment = '%s <= %s;' % (signal_name, value)
-
+        _line = '%s <= %s;' % (signal_name, value)
         
-        log(COMPILER, DEBUG, 'created port assignment: `%s`' % _assignment)
+        #_assignment = '%s_o <= %s;' % (name, signal_name)
+
+        log(COMPILER, DEBUG, 'created port assignment: `%s`' % _line)
         log(COMPILER, DEBUG, 'creating signal for port register: `%s`' % signal_name)
 
     # it's a var.
@@ -157,16 +169,16 @@ def process_assignment(line, ports, _vars):
 
         signal_name = '%s_s' % name
         
-        _assignment = '%s <= %s;' % (signal_name, value)
+        _line = '%s <= %s;' % (signal_name, value)
 
-        log(COMPILER, DEBUG, 'created var assignment: `%s`' % _assignment)
+        log(COMPILER, DEBUG, 'created var assignment: `%s`' % _line)
 
     else:
         # throw error
         #raise Exception('bad')
         pass
 
-    return _signal, _assignment
+    return _signal, _line, _assignment
 
 def merge_vhdl_structures(old, new):
 
@@ -175,6 +187,7 @@ def merge_vhdl_structures(old, new):
         'lines': [],
         'defauls': [],
         'signals': [],
+        'assignments': [],
     }
     '''
 
@@ -190,6 +203,9 @@ def merge_vhdl_structures(old, new):
     for signal in new['signals']:
         vhdl['signals'].append(signal)
 
+    for assignment in new['assignments']:
+        vhdl['assignments'].append(assignment)
+
     return vhdl
 
 def decode_condition(line, ports, _vars):
@@ -200,7 +216,7 @@ def decode_condition(line, ports, _vars):
     operation = condition.split(' ')[1]
     value = condition.split(' ')[2]
 
-    signal, assignment_type = signal_from_name(target, ports, _vars)
+    signal, assignment_type, dummy = signal_from_name(target, ports, _vars)
 
     decoded_value = decode_assignment_value(value, signal)
 
@@ -231,11 +247,13 @@ def process_lines(index, indent, lines, ports, _vars):
 
        g) fsm <name>:
 
-       h) <name> = <value>
+       h) <state>:
 
-       i) <name>++
+       i) <name> = <value>
 
-       j) <name>--
+       j) <name>++
+
+       k) <name>--
 
     4)  
 
@@ -248,19 +266,33 @@ def process_lines(index, indent, lines, ports, _vars):
     vhdl = {
         'lines': [],
         'defauls': [],
-        #'assignments': [],
+        'assignments': [],
         'signals': [],
         'resets': [],
     }
+
+    inside_if_control_structure = False
+    inside_case_control_structure = False
+    inside_fsm_control_structure = False
+
+    line_indent = sys.maxsize # big.
 
     i = index
     while(True):
         _line = lines[i]
         line = _line['line']
         line_number = _line['line_number']
+        last_line_indent = line_indent
         line_indent = get_indent(line)
 
         log(COMPILER, DEBUG, '%i (%i): %s' % (line_number, line_indent, line))
+
+        # handle closing control structures
+        if inside_if_control_structure and last_line_indent > line_indent:
+            vhdl.append({
+                'indent': line_indent,
+                'vhdl': 'end if;',
+            })
 
         if i == index and line.strip() != 'reset:':
             # todo: throw error
@@ -286,9 +318,15 @@ def process_lines(index, indent, lines, ports, _vars):
 
                 log(COMPILER, DEBUG, '%i (%i): %s' % (line_number, line_indent, line))
 
-                _dummy, reset_assignment = process_assignment(line, ports, _vars)
+                signal, _line, assignment = process_assignment(line, ports, _vars)
 
-                vhdl['resets'].append(reset_assignment)
+                if signal:
+                    vhdl['signals'].append(signal)
+
+                if assignment:
+                    vhdl['assignments'].append(assignment)
+
+                vhdl['resets'].append(_line)
 
                 log(COMPILER, DEBUG, 'line_indent: %i, reset_line_indent: %i' % (line_indent, reset_line_indent))
 
@@ -409,10 +447,14 @@ def process_lines(index, indent, lines, ports, _vars):
 
             log(COMPILER, INFO, 'assignment found.')
 
-            signal, _vhdl = process_assignment(line, ports, _vars)
+            signal, _vhdl, assignment = process_assignment(line, ports, _vars)
 
             if signal:
                 vhdl['signals'].append(signal)
+
+            if assignment:
+                vhdl['assignments'].append(assignment)
+
             #vhdl['assignments'].append(assignment)
             #vhdl['lines'].append(assignment)
 
@@ -426,14 +468,17 @@ def process_lines(index, indent, lines, ports, _vars):
             log(COMPILER, INFO, 'increment found.')
             target = line.strip().split('++')[0]
 
-            signal, _dummy = signal_from_name(target, ports, _vars)
+            signal, _dummy, assignment = signal_from_name(target, ports, _vars)
 
             if signal:
                 vhdl['signals'].append(signal)
 
+            if assignment:
+                vhdl['assignments'].append(assignment)
+
             vhdl['lines'].append({
                 'indent': line_indent,
-                'vhdl': '%s <= %s + \'1\'' % (target, target),
+                'vhdl': '%s_s <= %s_s + \'1\'' % (target, target),
             })
 
         # -1
@@ -442,10 +487,13 @@ def process_lines(index, indent, lines, ports, _vars):
             
             target = line.strip().split('--')[0]
 
-            signal, _dummy = signal_from_name(target, ports, _vars)
+            signal, _dummy, assignments = signal_from_name(target, ports, _vars)
 
             if signal:
                 vhdl['signals'].append(signal)
+
+            if assignment:
+                vhdl['assignments'].append(assignment)
 
             vhdl['lines'].append({
                 'indent': line_indent,
@@ -614,8 +662,6 @@ def parse_procedures(tokens):
             #    dummy, vhdl = process_lines(0, 4, lines, _vars, _ports)
             dummy, vhdl = process_lines(0, 4, lines, _ports, _vars)
 
-
-
         _procedures.append({
             'name': name,
             'proc_type': proc_type,
@@ -624,7 +670,6 @@ def parse_procedures(tokens):
             'lines': lines,
             'vhdl': vhdl,
             'signals': signals,
-            'assignments': assignments,
         })
 
     return _procedures
@@ -654,24 +699,120 @@ def build_ports_vhdl(ports):
     vhdl += '    );'
     return vhdl
 
-def build_procesure_vhdl(procedure, tokens):
 
-    vhdl  = '    process( %s )\n' % procedure['clock']
-    vhdl += '    begin\n'
-    vhdl += '        if ( rising_edge( %s ) ) then\n' % procedure['clock']
-    vhdl += '            if ( %s = \'1\' ) then\n' % procedure['reset']
-    for reset in procedure['vhdl']['resets']:
-        vhdl += '                %s\n' % reset
-    vhdl += '            else\n'
-    for line in procedure['vhdl']['lines']:
-        vhdl += '            %s%s\n' % (make_indent(line['indent']), line['vhdl'])
-    vhdl += '            end if;\n'
-    vhdl += '        end if;\n'
-    vhdl += '    end process;\n'
+def build_components_vhdl():
+    
+    vhdl = ''
 
-    log(COMPILER, DEBUG, 'process vhdl:\n%s' % vhdl)
+    vhdl = '    --\n    -- components\n    --\n'
 
     return vhdl
+
+
+def build_signals_vhdl(_vars, _procedures):
+
+    vhdl = ''
+    vhdl += '    --\n    -- signals\n    --\n\n'
+ 
+    #
+    # TODO: should we add the `_s` suffix here, or when we find 
+    #       the var deffinition ????
+    #
+
+    _signals = []
+    for var in _vars:
+        if var['type'] == 'std_logic':
+            _signals.append('    signal %s_s :  std_logic;\n' % var['name'])
+        elif var['type'] == 'std_logic_vector':
+            _signals.append('    signal %s_s : std_logic_vector(%s downto %s);\n' % (var['name'], var['left'], var['right']))
+        else:
+            # todo: throw error
+            pass
+
+    vhdl += '    \n'
+
+    # build up list of all output registers ( note: there may be duplicates )
+    _registers = []
+    for procedure in _procedures:
+        for signal in procedure['vhdl']['signals']:
+            if signal['type'] == 'std_logic':
+                _registers.append('    signal %s :  std_logic;\n' % signal['name'])
+            elif signal['type'] == 'std_logic_vector':
+                _registers.append('    signal %s : std_logic_vector(%s downto %s);\n' % (signal['name'], signal['left'], signal['right']))
+            else:
+                # todo: throw error
+                pass
+
+    vhdl += '    -- internal signals\n'
+
+    # add unique registers to vhdl output
+    for signal in _signals:
+        vhdl += signal
+
+    # remove duplicates
+    seen = set()
+    registers = []
+    for register in _registers:
+        print(register)
+        if register not in seen and register not in _signals:
+            seen.add(register)
+            registers.append(register)
+
+    vhdl += '\n    -- output register signals\n'
+
+    # add unique registers to vhdl output
+    for register in registers:
+        vhdl += register
+
+    return vhdl
+
+
+def build_assignments_vhdl(_procedures):
+
+    vhdl = ''
+
+    vhdl = '    --\n    -- assignments\n    --\n\n'
+
+    for procedure in _procedures:
+        for assignment in procedure['vhdl']['assignments']:
+            vhdl += '    %s\n' % assignment
+    return vhdl
+
+
+def build_instantiations_vhdl():
+
+    vhdl = ''
+
+    vhdl = '    --\n    -- instantiations\n    --\n'
+
+    return vhdl
+
+
+
+def build_procesure_vhdl(procedures, tokens):
+
+    vhdl = '    --\n    -- processes\n    --\n'
+
+    for procedure in procedures:
+
+        vhdl += '    \n'
+        vhdl += '    proc_%s: process( %s )\n' % (procedure['name'], procedure['clock'])
+        vhdl += '    begin\n'
+        vhdl += '        if ( rising_edge( %s ) ) then\n' % procedure['clock']
+        vhdl += '            if ( %s = \'1\' ) then\n' % procedure['reset']
+        for reset in procedure['vhdl']['resets']:
+            vhdl += '                %s\n' % reset
+        vhdl += '            else\n'
+        for line in procedure['vhdl']['lines']:
+            vhdl += '            %s%s\n' % (make_indent(line['indent']), line['vhdl'])
+        vhdl += '            end if;\n'
+        vhdl += '        end if;\n'
+        vhdl += '    end process;\n'
+
+    #log(COMPILER, DEBUG, 'processes `%s` vhdl:\n%s' % (procedure['name'], vhdl))
+
+    return vhdl
+
 
 def compile(filename, verbose=False):
 
@@ -685,27 +826,41 @@ def compile(filename, verbose=False):
     # we need to generate assignments and port directions.
     _procedures = parse_procedures(tokens)
 
-    log(COMPILER, DEBUG, 'procedures:')
-    log(COMPILER, DEBUG, '\n%s' % json.dumps(_procedures, indent=4))
-
     # generate ports vhdl
     ports_vhdl = build_ports_vhdl(tokens['ports'])
 
+    components_vhdl = build_components_vhdl()
+
+    signals_vhdl = build_signals_vhdl(tokens['vars'], _procedures)
+
+    assignments_vhdl = build_assignments_vhdl(_procedures)
+
+    instantiations_vhdl = build_instantiations_vhdl()    
+
     # generate procedures
-    procedures_vhdl = build_procesure_vhdl(_procedures[0], tokens)
+    procedures_vhdl = build_procesure_vhdl(_procedures, tokens)
+
+    #log(COMPILER, DEBUG, 'procedures:\n%s' % json.dumps(_procedures, indent=4))
+
+    template_lut = [
+        ('<<entity_name>>',     entity_name_vhdl),
+        ('<<generics>>',        '--    generic (\n--        \n--    );'),
+        ('<<ports>>',           ports_vhdl),
+        ('<<components>>',      components_vhdl),
+        ('<<signals>>',         signals_vhdl),
+        ('<<assignments>>',     assignments_vhdl),
+        ('<<instantiations>>',  instantiations_vhdl),
+        ('<<procedures>>',      procedures_vhdl),
+    ]
 
     # read in the template for replacement
     template = read_template()
 
-
-    template = template.replace('<<entity_name>>', entity_name_vhdl)
-
-    # we don't currently support generics
-    template = template.replace('<<generics>>', '--    generic (\n--        \n--    );')
-
-    template = template.replace('<<ports>>', ports_vhdl)
+    for key, value in template_lut:
+        template = template.replace(key, value)
 
     return template
+
 
 if __name__ == '__main__':
 
@@ -715,4 +870,13 @@ if __name__ == '__main__':
 
     #compile('pwm.chdl', verbose=True)
 
-    compile('counter32.chdl', verbose=True)
+    start = time.time()
+
+    vhdl = compile('counter32.chdl', verbose=True)
+
+    end = time.time()
+
+    log(COMPILER, INFO, 'file compiled in %.6f seconds' % (end-start) )
+
+    log(COMPILER, INFO, 'VHDL\n%s' % vhdl)
+

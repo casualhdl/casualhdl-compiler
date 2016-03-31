@@ -1,6 +1,7 @@
 
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.std_numeric.all;
 
 entity <<entity_name>> is
 <<generics>>
@@ -9,11 +10,15 @@ end <<entity_name>>
 
 architecture behavioral of <<entity_name>> is
 
-<<components_and_signals>>
+<<components>>
+
+<<signals>>
 
 begin
 
 <<assignments>>
+
+<<instantiations>>
 
 <<procedures>>
 
