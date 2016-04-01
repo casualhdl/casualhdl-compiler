@@ -1,15 +1,20 @@
 
 from log import (
     log,
+    TOKENIZER,
     INFO,
     WARNING,
     ERROR,
     DEBUG,
-    TOKENIZER,
 )
 
 import time
 import json
+
+def read_template():
+    with open('vhdl.template', 'r') as f:
+        template = f.read()
+    return template
 
 def read_lines(filename):
     with open(filename, 'r') as f:
@@ -35,6 +40,8 @@ def preprocess(i, line, whitespace=False):
 def tokenize(filename, verbose=False):
     
     start = time.time()
+
+    log(TOKENIZER, INFO, 'tokenizer starting')
 
     # read file
     lines = read_lines(filename)
@@ -296,6 +303,7 @@ def tokenize(filename, verbose=False):
                 'name': reset,
                 'assignments': [],
             }
+            proc['vhdl'] = ''
 
             first_line = True
             while True:

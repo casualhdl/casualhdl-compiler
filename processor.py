@@ -365,18 +365,21 @@ def process_lines(index, indent, procedure_index, tokens):
         line_number = _line['line_number']
         proc_type = tokens['procedures'][procedure_index]['proc_type']
 
+        log(PROCESSOR, DEBUG, 'Line: `%s`' % line)
+
         # process indents
         last_line_indent = line_indent
         line_indent = get_indent(line)
 
         #log(PROCESSOR, DEBUG, '%i (%i): %s' % (line_number, line_indent, line))
 
-        if proc_type == 'sync' and i == index and line.strip() != 'reset:':
-            # todo: throw error
-            pass
+        #if proc_type == 'sync' and i == index and line.strip() != 'reset:':
+        #    log(PROCESSOR, INFO, 'missing reset inside of sync procedure')
+        #    # todo: throw error
+        #    pass
 
         # reset assignments
-        elif i == index and line.strip() == 'reset:':
+        if i == index and line.strip() == 'reset:':
             
             log(PROCESSOR, INFO, 'parsing process reset assignments')
 
@@ -640,6 +643,8 @@ def process_assignments(tokens):
 def process(filename):
 
     start = time.time()
+
+    log(PROCESSOR, INFO, 'processor starting')
 
     # get the tokenized verion of the file
     tokens = tokenize(filename)
