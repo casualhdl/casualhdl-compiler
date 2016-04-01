@@ -20,10 +20,10 @@ var count = vector(31, 0)
 proc counter_decode = sync(clk, reset):
     reset:
         count = zeros
-
+        
     if reset_count = 1:
         count = zeros
-    elsif count = count_max:
+    elsif count = max:
         done = 1
     else:
         count++

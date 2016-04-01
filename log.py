@@ -8,7 +8,9 @@ WARNING = 4
 DEBUG = 8
 
 TOKENIZER = 'tokenizer'
+PROCESSOR = 'processor'
 COMPILER = 'compiler'
+
 
 def log_lut(level):
     lut = {
@@ -22,4 +24,4 @@ def log_lut(level):
 def log(source, level, text):
 
     #if level < DEBUG:
-        print('[%s][%s] %s: %s' % (datetime.datetime.now(), source, log_lut(level), text))
+        print('[ %s ][ %s ] %s: %s' % (datetime.datetime.now(), source, log_lut(level), text))

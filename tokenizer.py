@@ -7,6 +7,8 @@ from log import (
     DEBUG,
     TOKENIZER,
 )
+
+import time
 import json
 
 def read_lines(filename):
@@ -31,6 +33,9 @@ def preprocess(i, line, whitespace=False):
     return {'line_number': i, 'line': line}
 
 def tokenize(filename, verbose=False):
+    
+    start = time.time()
+
     # read file
     lines = read_lines(filename)
     # setup response structure
@@ -41,6 +46,7 @@ def tokenize(filename, verbose=False):
     tokens['ports']['resets'] = []
     tokens['ports']['signals'] = []
     tokens['vars'] = []
+    tokens['assignments'] = []
     tokens['procedures'] = []
     # do first pass of file, and tokenize
     eof = False
@@ -104,7 +110,10 @@ def tokenize(filename, verbose=False):
                         # todo: throw error
                         pass
                     else:
-                        tokens['ports']['clocks'].append(name)
+                        tokens['ports']['clocks'].append({
+                            'name': name,
+                            'vhdl': '',
+                        })
                 elif rest_parts[0] == 'reset':
                     if len(rest_parts) == 1:
                         # todo: throw error
@@ -113,7 +122,10 @@ def tokenize(filename, verbose=False):
                         # todo: throw error
                         pass
                     else:
-                        tokens['ports']['resets'].append(name)
+                        tokens['ports']['resets'].append({
+                            'name': name,
+                            'vhdl': '',
+                        })
                 elif rest_parts[0] == 'bit':
                     if len(rest_parts) == 1:
                         # todo: throw error
@@ -125,6 +137,10 @@ def tokenize(filename, verbose=False):
                         tokens['ports']['signals'].append({
                             'name': name,
                             'type': 'std_logic',
+                            'left': None,
+                            'right': None,
+                            'direction': None,
+                            'vhdl': '',
                         })
                 elif rest_parts[0] == 'vector':
                     log(TOKENIZER, DEBUG, 'port, vector found.')
@@ -147,6 +163,8 @@ def tokenize(filename, verbose=False):
                             'type': 'std_logic_vector',
                             'left': left,
                             'right': right,
+                            'direction': None,
+                            'vhdl': '',
                         })
                 else:
                     # todo: throw error
@@ -188,9 +206,13 @@ def tokenize(filename, verbose=False):
                         # todo: throw error
                         pass
                     else:
+                        # note: we add `_s` to the end of all signals
                         tokens['vars'].append({
-                            'name': name,
+                            'name': '%s_s' % name,
                             'type': 'std_logic',
+                            'left': None,
+                            'right': None,
+                            'output_register': None,
                         })
                 elif rest_parts[0] == 'vector':
                     if len(rest_parts) == 1:
@@ -209,11 +231,13 @@ def tokenize(filename, verbose=False):
                             inside = rest.split('(')[1].split(')')[0]
                             left = inside.split(',')[0].strip()
                             right = inside.split(',')[1].strip()
+                        # note: we add `_s` to the end of all signals
                         tokens['vars'].append({
-                            'name': name,
+                            'name': '%s_s' % name,
                             'type': 'std_logic_vector',
                             'left': left,
                             'right': right,
+                            'output_register': None,
                         })
                 else:
                     # todo: throw error
@@ -268,7 +292,10 @@ def tokenize(filename, verbose=False):
             proc['name'] = name
             proc['proc_type'] = proc_type
             proc['clock'] = clock
-            proc['reset'] = reset
+            proc['reset'] = {
+                'name': reset,
+                'assignments': [],
+            }
 
             first_line = True
             while True:
@@ -315,11 +342,15 @@ def tokenize(filename, verbose=False):
             eof = True
             break
 
-    log(TOKENIZER, DEBUG, 'tokenizing results:\n%s' % json.dumps(tokens, indent=4))
+    #log(TOKENIZER, DEBUG, 'tokenizing results:\n%s' % json.dumps(tokens, indent=4))
+
+    end = time.time()
+
+    log(TOKENIZER, INFO, 'tokenizing finished in %.6f seconds' % (end-start) )
 
     return tokens
         
 
-#if __name__ == '__main__':
-#
-#    log(json.dumps(tokenize(read_lines('counter32.chdl'), verbose=True), indent=4))
+if __name__ == '__main__':
+
+    log(json.dumps(tokenize('counter32.chdl')), indent=4)
