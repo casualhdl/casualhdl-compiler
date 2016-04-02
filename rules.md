@@ -14,7 +14,9 @@
 
     port <name> = <type>(<params>)
 
-    var <name> = <type>(params)
+    var <name> = <type>(<params>)
+
+    proc <name> = <type>(<parms>)
 
 
 ## port/var types
@@ -23,7 +25,7 @@
 
     reset()
 
-    logic()
+    bit()
 
     vector(<high>, <low>)
 

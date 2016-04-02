@@ -12,9 +12,7 @@ port reset = reset()
 port reset_count = bit()
 port max = vector(31, 0)
 port done = bit()
-#port reset_counter = vector(31, 0)
 
-#var reset_count_reg = bit()
 var count = vector(31, 0)
 
 proc counter_decode = sync(clk, reset):
