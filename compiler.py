@@ -35,15 +35,15 @@ def compile_ports(tokens):
     for reset in tokens['ports']['resets']:
         vhdl += '%s-- reset\n' % HEADER
         vhdl += '%s%s : in std_logic;\n\n' % (HEADER, reset['name'])
+    vhdl += '%s-- interface ports\n' % HEADER
     for signal in tokens['ports']['signals']:
         name = signal['name']
         signal_type = signal['type']
+        direction = signal['direction']
         if signal_type == 'std_logic':
-            direction = 'inout'
             vhdl += '%s%s : %s std_logic;\n' % (HEADER, name, direction)
         elif signal_type == 'std_logic_vector':
             #direction = signal['direction']
-            direction = 'inout'
             left = signal['left']
             right = signal['right']
             vhdl += "%s%s : %s std_logic_vector(%s downto %s);\n" % (HEADER, name, direction, left, right)
@@ -70,14 +70,25 @@ def compile_procedures(tokens):
         _vhdl = ''
         _vhdl += '%sprocess( %s )\n' % (make_indent(1), clock)
         _vhdl += '%sbegin\n' % make_indent(1)
-        _vhdl += '%sif ( rising_edge( %s ) ) then\n%sif ( %s = \'1\' ) then\n' % (
-            make_indent(2), clock, make_indent(3), reset,
+        _vhdl += '%sif ( rising_edge( %s ) ) then\n%sif ( %s = \'1\' ) then\n\n%s-- reset values\n' % (
+            make_indent(2), clock, make_indent(3), reset, make_indent(4)
         )
 
         for assignment in tokens['procedures'][i]['reset']['assignments']:
             _vhdl += '%s%s;\n' % (make_indent(4), assignment['vhdl'])
 
-        _vhdl += '%selse\n' % make_indent(3)
+        _vhdl += '\n%selse\n' % make_indent(3)
+        _vhdl += '\n%s-- derived defaults\n' % make_indent(4)
+        for derived in tokens['procedures'][i]['defaults']['derived']:
+            found = False
+            for defined in tokens['procedures'][i]['defaults']['defined']:
+                if derived['name'] == defined['name']:
+                    found = True
+                    break            
+            if not found:
+                _vhdl += '%s%s\n' % (make_indent(4), derived['vhdl'])
+        _vhdl += '\n'
+        _vhdl += '%s-- process logic\n' % make_indent(4)
         current_indent = -1 # small.
         for j in range(0, len(tokens['procedures'][i]['lines'])):
             _line = tokens['procedures'][i]['lines'][j]
@@ -101,9 +112,9 @@ def compile_procedures(tokens):
 
                 current_indent = indent
 
-        _vhdl += '%send if;\n' % make_indent(3);
+        _vhdl += '\n%send if;\n' % make_indent(3);
         _vhdl += '%send if;\n' % make_indent(2);
-        _vhdl += '%send process;\n\n' % make_indent(1)
+        _vhdl += '%send process;\n' % make_indent(1)
 
         tokens['procedures'][i]['vhdl'] = _vhdl
 

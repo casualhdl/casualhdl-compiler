@@ -396,29 +396,26 @@ def process_lines(index, indent, procedure_index, tokens):
                 line_number = _line['line_number']
                 reset_line_indent = get_indent(line)
 
-                #log(PROCESSOR, DEBUG, '%i (%i): %s' % (line_number, line_indent, line))
-
-                #signal, _line, assignment = process_assignment(line, ports, _vars)
-
-                #if signal:
-                #    vhdl['signals'].append(signal)
-
-                #if assignment:
-                #    vhdl['assignments'].append(assignment)
-
                 subject, value = parse_assignment(line)
 
                 # we can only ever assign a value to a signal, so we can make this
                 # assumption here.
                 name = '%s_s' % subject
 
-                value_decoded = decode_value(value, name, tokens)
+                # the value could be a hard coded value, or it could be a signal or port
+                if get_port_from_name('%s_i' % value, tokens):
+                    decoded_value = '%s_i' % value
+                elif get_port_from_name('%s_io' % value, tokens):
+                    decoded_value = '%s_io' % value
+                elif get_var_from_name('%s_s' % value, tokens):
+                    decoded_value = '%s_s' % value
+                else:
+                    # it's a hard value, not a signal or port
+                    decoded_value = decode_value(value, name, tokens)
 
                 tokens['procedures'][procedure_index]['reset']['assignments'].append({
-                    'vhdl': '%s_s <= %s' % (subject, value_decoded),
+                    'vhdl': '%s_s <= %s' % (subject, decoded_value),
                 })
-
-                #log(PROCESSOR, DEBUG, 'line_indent: %i, reset_line_indent: %i' % (line_indent, reset_line_indent))
 
                 if i+1 == len(lines):
                     # todo: throw error
@@ -543,13 +540,49 @@ def process_lines(index, indent, procedure_index, tokens):
             # assumption here.
             name = '%s_s' % subject
 
-            value_decoded = decode_value(value, name, tokens)
+            # the value could be a hard coded value, or it could be a signal or port
+            if get_port_from_name('%s_i' % value, tokens):
+                decoded_value = '%s_i' % value
+            elif get_port_from_name('%s_io' % value, tokens):
+                decoded_value = '%s_io' % value
+            elif get_var_from_name('%s_s' % value, tokens):
+                decoded_value = '%s_s' % value
+            else:
+                # it's a hard value, not a signal or port
+                decoded_value = decode_value(value, name, tokens)
+
+            _vhdl = '%s <= %s;' % (name, decoded_value)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'indent': line_indent,
                 'is_control_structure': False,
-                'vhdl': '%s <= %s;' % (name, value_decoded),
+                'vhdl': _vhdl,
             }
+
+            # check if this is a default assignment
+            if line_indent == 1:
+
+                # it's a default assignment.  we'll save that to the list
+                # of defined defaults so the compiler knows not to generate
+                # a derived default
+
+                tokens['procedures'][procedure_index]['defaults']['defined'].append({
+                    'name': name,
+                    'vhdl': _vhdl,
+                })
+
+            else:
+
+                # this is not a default assignment.  we need to add a default to 
+                # our derived list.  the compiler will choose to use it or not.
+
+                # default to its self so a register is born
+                _vhdl = _vhdl = '%s <= %s;' % (name, name)
+
+                tokens['procedures'][procedure_index]['defaults']['derived'].append({
+                    'name': name,
+                    'vhdl': _vhdl,
+                })
 
         # +1
         elif '++' in line:
@@ -565,7 +598,7 @@ def process_lines(index, indent, procedure_index, tokens):
             }
 
         # -1
-        elif '++' in line:
+        elif '--' in line:
 
             log(PROCESSOR, INFO, 'increment found.')
 

@@ -11,11 +11,6 @@ from log import (
 import time
 import json
 
-def read_template():
-    with open('vhdl.template', 'r') as f:
-        template = f.read()
-    return template
-
 def read_lines(filename):
     with open(filename, 'r') as f:
         lines = f.read().split('\n')
@@ -118,7 +113,7 @@ def tokenize(filename, verbose=False):
                         pass
                     else:
                         tokens['ports']['clocks'].append({
-                            'name': name,
+                            'name': '%s_i' % name,
                             'vhdl': '',
                         })
                 elif rest_parts[0] == 'reset':
@@ -130,7 +125,7 @@ def tokenize(filename, verbose=False):
                         pass
                     else:
                         tokens['ports']['resets'].append({
-                            'name': name,
+                            'name': '%s_i' % name,
                             'vhdl': '',
                         })
                 elif rest_parts[0] == 'bit':
@@ -285,11 +280,11 @@ def tokenize(filename, verbose=False):
             proc_type = rest_parts[0].strip()
             inside = rest.split('(')[1].split(')')[0]
             if proc_type == 'sync':
-                clock = inside.split(',')[0].strip()
-                reset = inside.split(',')[1].strip()
+                clock = '%s_i' % inside.split(',')[0].strip()
+                reset = '%s_i' % inside.split(',')[1].strip()
             elif proc_type == 'async':
                 clock = None
-                reset = inside.split(',')[0].strip()
+                reset = '%s_i' % inside.split(',')[0].strip()
             else:
                 # todo: throw error
                 pass
@@ -302,6 +297,10 @@ def tokenize(filename, verbose=False):
             proc['reset'] = {
                 'name': reset,
                 'assignments': [],
+            }
+            proc['defaults'] = {
+                'derived': [],
+                'defined': [],
             }
             proc['vhdl'] = ''
 
