@@ -63,9 +63,9 @@ begin
 
                 -- derived defaults
                 count_s <= count_s;
-                done_s <= done_s;
 
                 -- process logic
+                done_s <= '0';
                 if ( reset_count_i = '1' ) then
                     count_s <= "00000000000000000000000000000000";
                 elsif ( count_s = max_i ) then
