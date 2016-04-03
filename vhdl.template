@@ -22,15 +22,18 @@ begin
     --
     -- output port assignments
     --
+    
 <<assignments>>
 
     --
     -- instantiations
     --
+
 <<instantiations>>
 
     --
     -- procedures
     --
+
 <<procedures>>
 end behavioral; 

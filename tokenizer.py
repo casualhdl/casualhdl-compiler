@@ -36,7 +36,7 @@ def tokenize(filename, verbose=False):
     
     start = time.time()
 
-    log(TOKENIZER, INFO, 'tokenizer starting')
+    log(TOKENIZER, INFO, 'tokenizer starting.  working on file: "%s"' % filename)
 
     # read file
     lines = read_lines(filename)
@@ -271,8 +271,6 @@ def tokenize(filename, verbose=False):
                 # todo: throw error
                 pass
 
-            
-
             name = parts[1]
             equals = parts[2]
             rest = ' '.join(parts[3:])
@@ -281,10 +279,14 @@ def tokenize(filename, verbose=False):
             inside = rest.split('(')[1].split(')')[0]
             if proc_type == 'sync':
                 clock = '%s_i' % inside.split(',')[0].strip()
-                reset = '%s_i' % inside.split(',')[1].strip()
+                reset = None
+                if inside != '':
+                    reset = '%s_i' % inside.split(',')[1].strip()
             elif proc_type == 'async':
                 clock = None
-                reset = '%s_i' % inside.split(',')[0].strip()
+                reset = None
+                if inside.strip() != '':
+                    reset = '%s_i' % inside.split(',')[0].strip()
             else:
                 # todo: throw error
                 pass
@@ -355,9 +357,11 @@ def tokenize(filename, verbose=False):
 
     log(TOKENIZER, INFO, 'tokenizing finished in %.6f seconds' % (end-start) )
 
+    #log(TOKENIZER, DEBUG, 'tokens: \n%s' % json.dumps(tokens, indent=4))
+
     return tokens
         
 
 if __name__ == '__main__':
 
-    log(json.dumps(tokenize('counter32.chdl')), indent=4)
+    tokenize('counter32.chdl')

@@ -8,6 +8,7 @@ from log import (
     DEBUG,
 )
 
+import os
 import json
 import re
 import sys
@@ -30,7 +31,7 @@ def get_indent(line):
 def zero_extend(value, width):
 
     v = ''
-    for i in range(0, width):
+    for i in range(0, width-len(value)):
         v += '0'
     v = v + value
 
@@ -62,6 +63,7 @@ def decode_value(value, name, tokens):
     if signal['type'] == 'std_logic_vector':
         # get total width of vector
         width = abs(int(signal['left'])) + abs(int(signal['right'])) +  1
+        print('width: %i' % width)
 
     val = ''
     if signal['type'] == 'std_logic':
@@ -85,18 +87,28 @@ def decode_value(value, name, tokens):
             pass
 
         # all zeros
-        if value == 'zeros':
-            val = '"%s"' % zero_extend('', width)
+        elif value == 'zeros' or value == '0':
+            #val = '"%s"' % zero_extend('', width)
+            val = '(others => \'0\')';
 
         # all zeros
-        if value == 'ones':
+        elif value == 'ones':
             val = '"%s"' % one_extend('', width)
 
         # decimal
         else:
 
-            pass
+            v = bin(int(value))[2:]
+            val = '"%s"' % zero_extend(v, width)
 
+            print(value)
+            print(int(value))
+            print(bin(int(value)))
+            print(bin(int(value))[2:])
+            print(val)
+            print(json.dumps(signal, indent=4))
+
+            
     else:
         # throw error
         pass
@@ -111,7 +123,7 @@ def parse_conditional(line):
     line = line.strip()
     line = re.sub(' +', ' ', line)
     line = ''.join(line.split(':')[:-1])
-
+    
     # break into parts
     parts = line.split(' ')
 
@@ -134,6 +146,16 @@ def parse_assignment(line):
 
     subject = parts[0]
     value = parts[2]
+
+    # test to see if this is an assignment to a internal or port signal
+    # or if it is going to a component
+    if '.' in subject:
+        parts = subject.split('.')
+        subject = '%s_%s' % (parts[0], parts[1])
+
+    #print('----')
+    #print(subject, value)
+    #print('----')
 
     return subject, value
 
@@ -218,6 +240,88 @@ def update_port_direction(name, direction, tokens):
 
     return tokens
 
+def filename_from_component(component):
+
+    name = component['name']
+    library = component['library']
+    parts = library.split('.')
+
+    filename = os.path.join(parts[0], parts[1], '%s.chdl' % parts[2])
+
+    return filename
+
+def process_components(tokens, lib_dirs):
+
+    '''
+    casualhdl will go and process all of the components that are used in
+    the file.
+    '''   
+
+    components = []
+
+    for i in range(0, len(tokens['components'])):
+        component = tokens['components'][i]
+        filename = filename_from_component(component)
+
+        for lib_dir in lib_dirs:
+            full_filename = '%s/%s' % (lib_dir, filename)
+            if os.path.isfile(full_filename):
+
+                _tokens = process(full_filename)       
+
+                components.append({
+                    'name': component['name'],
+                    'entity': _tokens['entity'],
+                    'library': _tokens['library'],
+                    'ports': _tokens['ports'],
+                })
+
+                tokens['components'][i]['ports'] = _tokens['ports']
+
+
+    for component in components:
+        '''
+        for clock in component['ports']['clocks']:
+            clock_name = '_'.join(clock['name'].split('_')[:-1])
+            tokens['vars'].append({
+                'name': '%s_%s_s' % (component['name'], clock_name),
+                'type': 'std_logic', 
+                'left': None,
+                'right': None,
+                'output_register': None, 
+                'vhdl': '',
+            })
+        for reset in component['ports']['resets']:
+            reset_name = '_'.join(reset['name'].split('_')[:-1])
+            tokens['vars'].append({
+                'name': '%s_%s_s' % (component['name'], reset_name),
+                'type': 'std_logic', 
+                'left': None,
+                'right': None,
+                'output_register': None, 
+                'vhdl': '',
+            })
+        '''
+        for signal in component['ports']['signals']:
+            signal_name = '_'.join(signal['name'].split('_')[:-1])
+            tokens['vars'].append({
+                'name': '%s_%s_s' % (component['name'], signal_name),
+                'type': signal['type'], 
+                'left': signal['left'],
+                'right': signal['right'],
+                'output_register': None, 
+                'vhdl': '',
+            })
+
+    #print(json.dumps(components, indent=4))
+
+    #print(json.dumps(tokens, indent=4))
+
+    #if len(components) != 0:
+    #    raise Exception('debug')
+
+    return tokens
+
 def pre_process_ports(tokens):
 
     '''
@@ -283,6 +387,8 @@ def pre_process_ports(tokens):
         'out': 'o',
         'inout': 'io',
     }
+
+    print(json.dumps(tokens, indent=4))
 
     for i in range(0, len(tokens['ports']['signals'])):
         name = tokens['ports']['signals'][i]['name']
@@ -437,6 +543,8 @@ def process_lines(index, indent, procedure_index, tokens):
 
             log(PROCESSOR, INFO, '`if` control structure found')
 
+            # todo: handle just the name of the signal for true/false
+
             # parse the line
             subject, operation, value = parse_conditional(line)
 
@@ -462,6 +570,7 @@ def process_lines(index, indent, procedure_index, tokens):
                 decoded_value = decode_value(value, name, tokens)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                'command': 'if',
                 'indent': line_indent,
                 'is_control_structure': True,
                 'vhdl': 'if ( %s %s %s ) then' % (name, operation, decoded_value),
@@ -499,6 +608,7 @@ def process_lines(index, indent, procedure_index, tokens):
                 decoded_value = decode_value(value, name, tokens)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                'command': 'elsif',
                 'indent': line_indent,
                 'is_control_structure': True,
                 'vhdl': 'elsif ( %s %s %s ) then' % (name, operation, decoded_value),
@@ -512,6 +622,7 @@ def process_lines(index, indent, procedure_index, tokens):
             log(PROCESSOR, INFO, '`else` control structure found')
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                'command': 'else',
                 'indent': line_indent,
                 'is_control_structure': True,
                 'vhdl': 'else',
@@ -554,6 +665,7 @@ def process_lines(index, indent, procedure_index, tokens):
             _vhdl = '%s <= %s;' % (name, decoded_value)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                'command': 'assignment',
                 'indent': line_indent,
                 'is_control_structure': False,
                 'vhdl': _vhdl,
@@ -592,6 +704,7 @@ def process_lines(index, indent, procedure_index, tokens):
             name = '%s_s' % line.strip().split('++')[0]         
             
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                'command': 'increment',
                 'indent': line_indent,
                 'is_control_structure': False,
                 'vhdl': '%s <= %s + \'1\';' % (name, name),
@@ -605,6 +718,7 @@ def process_lines(index, indent, procedure_index, tokens):
             name = '%s_s' % line.strip().split('++')[0]         
             
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                'command': 'decrement',
                 'indent': line_indent,
                 'is_control_structure': False,
                 'vhdl': '%s <= %s - \'1\';' % (name, name),
@@ -677,15 +791,17 @@ def process(filename):
 
     start = time.time()
 
-    log(PROCESSOR, INFO, 'processor starting')
+    log(PROCESSOR, INFO, 'processor starting.  working on file: "%s"' % filename)
+
+    lib_dirs = [
+        './lib',
+    ]
 
     # get the tokenized verion of the file
     tokens = tokenize(filename)
 
-    #
-    # process the different parts of the file, generating the
-    # first level of vhdl for each part
-    #
+    tokens = process_components(tokens, lib_dirs)
+
     tokens = process_ports(tokens)
 
     tokens = process_vars(tokens)
@@ -695,6 +811,8 @@ def process(filename):
     tokens = process_assignments(tokens)
 
     end = time.time()
+
+    #log(PROCESSOR, DEBUG, 'tokens:\n%s' % json.dumps(tokens, indent=4))
 
     log(PROCESSOR, INFO, 'processing finished in %.6f seconds' % (end-start) )
 

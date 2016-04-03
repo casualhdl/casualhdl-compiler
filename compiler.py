@@ -58,65 +58,156 @@ def compile_ports(tokens):
 
     return tokens
 
-def compile_procedures(tokens):
+def compile_instantiations(tokens):
+
+    
+
+    #print(json.dumps(tokens, indent=4))
+
+    for i in range(0, len(tokens['components'])):
+        
+        _vhdl = ''
+
+        library = tokens['components'][i]['library'].replace('.','_')
+        name = '%s_%s' % (library, tokens['components'][i]['name'])
+        _vhdl += '%sinst_%s: entity work.%s ( behavioral )\n' % (make_indent(1), name, name)
+        _vhdl += '%sport map(\n' % make_indent(1) 
+        
+        _vhdl += '\n%s-- clocks\n' % make_indent(2)
+        if len(tokens['components'][i]['ports']['clocks']) != 0:
+            _vhdl += '%s%s <= %s,\n' % (make_indent(2), tokens['components'][i]['ports']['clocks'][0]['name'], tokens['ports']['clocks'][0]['name'])
+        
+        _vhdl += '\n%s-- resets\n' % make_indent(2)
+        if len(tokens['components'][i]['ports']['resets']) != 0:
+            _vhdl += '%s%s <= %s,\n' % (make_indent(2), tokens['components'][i]['ports']['resets'][0]['name'], tokens['ports']['resets'][0]['name'])
+        
+        _vhdl += '\n%s-- interface ports\n' % make_indent(2)
+        for signal in tokens['components'][i]['ports']['signals']:
+            signal_name = signal['name']
+            signal_signal_name = '%s_%s_s' % (name, '_'.join(signal['name'].split('_')[:-1]))
+            _vhdl += '%s%s => %s,\n' % (make_indent(2), signal_name, signal_signal_name)
+        _vhdl += '\n%s);\n\n' % make_indent(1)
+
+        tokens['components'][i]['vhdl'] = _vhdl
+
+        #print _vhdl
+
+    #print(json.dumps(tokens, indent=4))
+    #raise Exception('debug')
+
+    return tokens
+
+def compile_sync_proceedure(i, tokens):
 
     HEADER = '    '
 
-    for i in range(0, len(tokens['procedures'])):
-        
-        clock = tokens['procedures'][i]['clock']
-        reset = tokens['procedures'][i]['reset']['name']
+    name = tokens['procedures'][i]['name']
+    clock = tokens['procedures'][i]['clock']
+    reset = tokens['procedures'][i]['reset']['name']
 
-        _vhdl = ''
-        _vhdl += '%sprocess( %s )\n' % (make_indent(1), clock)
-        _vhdl += '%sbegin\n' % make_indent(1)
-        _vhdl += '%sif ( rising_edge( %s ) ) then\n%sif ( %s = \'1\' ) then\n\n%s-- reset values\n' % (
-            make_indent(2), clock, make_indent(3), reset, make_indent(4)
-        )
+    _vhdl = ''
+    _vhdl += '%s%s: process( %s )\n' % (make_indent(1), name, clock)
+    _vhdl += '%sbegin\n' % make_indent(1)
+    _vhdl += '%sif ( rising_edge( %s ) ) then\n%sif ( %s = \'1\' ) then\n\n%s-- reset values\n' % (
+        make_indent(2), clock, make_indent(3), reset, make_indent(4)
+    )
 
-        for assignment in tokens['procedures'][i]['reset']['assignments']:
-            _vhdl += '%s%s;\n' % (make_indent(4), assignment['vhdl'])
+    for assignment in tokens['procedures'][i]['reset']['assignments']:
+        _vhdl += '%s%s;\n' % (make_indent(4), assignment['vhdl'])
 
-        _vhdl += '\n%selse\n' % make_indent(3)
-        _vhdl += '\n%s-- derived defaults\n' % make_indent(4)
-        for derived in tokens['procedures'][i]['defaults']['derived']:
-            found = False
+    _vhdl += '\n%selse\n' % make_indent(3)
+    _vhdl += '\n%s-- derived defaults\n' % make_indent(4)
+    derived_list = []
+    for derived in tokens['procedures'][i]['defaults']['derived']:
+        found = False
+        if not (derived['name'] in derived_list):
+            print('adding "%s" to derived list' % derived['name'])
+            derived_list.append(derived['name'])
             for defined in tokens['procedures'][i]['defaults']['defined']:
                 if derived['name'] == defined['name']:
                     found = True
-                    break            
-            if not found:
-                _vhdl += '%s%s\n' % (make_indent(4), derived['vhdl'])
-        _vhdl += '\n'
-        _vhdl += '%s-- process logic\n' % make_indent(4)
-        current_indent = -1 # small.
-        for j in range(0, len(tokens['procedures'][i]['lines'])):
-            _line = tokens['procedures'][i]['lines'][j]
-            if 'vhdl' in _line:
-                line = _line['line']
-                #line_number = _line['line_number']
-                vhdl = _line['vhdl']['vhdl']
-                indent = _line['vhdl']['indent']
-                is_control_structure = _line['vhdl']['is_control_structure']
+                    break
+        else:
+            found = True
+                    
+        if not found:
+            _vhdl += '%s%s\n' % (make_indent(4), derived['vhdl'])
 
-                _vhdl += '%s%s\n' % (make_indent(indent+3), vhdl)
+    _vhdl += '\n'
+    _vhdl += '%s-- process logic\n' % make_indent(4)
+    current_indent = -1 # small.
+    for j in range(0, len(tokens['procedures'][i]['lines'])):
+        _line = tokens['procedures'][i]['lines'][j]
+        if 'vhdl' in _line:
+            line = _line['line']
+            #line_number = _line['line_number']
+            vhdl = _line['vhdl']['vhdl']
+            indent = _line['vhdl']['indent']
+            is_control_structure = _line['vhdl']['is_control_structure']
 
-                # if this line isn't a control structure ...
-                if not is_control_structure:
+            _vhdl += '%s%s\n' % (make_indent(indent+3), vhdl)
 
-                    # and we're at the end of the file OR our indent is decreasing, then we
-                    # need to close our control structure.
-                    if j+1 == len(tokens['procedures'][i]['lines']) or current_indent > tokens['procedures'][i]['lines'][j+1]['vhdl']['indent']:
+            # if this line isn't a control structure ...
+            if not is_control_structure:
 
-                        _vhdl += '%send if;\n' % make_indent(indent+2)
+                _num_lines = len(tokens['procedures'][i]['lines'])
+                _indent = current_indent
+                _command = None
+                if (j+1) < len(tokens['procedures'][i]['lines']): 
+                    _indent = tokens['procedures'][i]['lines'][j+1]['vhdl']['indent']
+                    _command = tokens['procedures'][i]['lines'][j+1]['vhdl']['command']
 
-                current_indent = indent
 
-        _vhdl += '\n%send if;\n' % make_indent(3);
+                # and we're at the end of the file OR our indent is decreasing, AND
+                # there aren't any elsif or else then we need to close our control structure.
+                if ( j+1 == _num_lines or current_indent >  _indent ) and ( current_indent == _indent and _command != 'elsif' and _command != 'else' ):
+
+                    _vhdl += '%send if;\n' % make_indent(indent+2)
+
+            current_indent = indent
+
+    _vhdl += '\n%send if;\n' % make_indent(3);
+    _vhdl += '%send if;\n' % make_indent(2);
+    _vhdl += '%send process;\n' % make_indent(1)
+
+    tokens['procedures'][i]['vhdl'] = _vhdl
+
+    return tokens
+
+def compile_async_procedure(i, tokens):
+
+    name = tokens['procedures'][i]['name']
+    reset = tokens['procedures'][i]['reset']['name']
+
+    sensitivity_list = []
+    lines = []
+    for j in range(0, len(tokens['procedures'][i]['lines'])):
+        vhdl = tokens['procedures'][i]['lines'][j]['vhdl']['vhdl']
+        lines.append('%s%s' % (make_indent(2), vhdl))
+        sensitivity_list.append(vhdl.split('<=')[0].strip())
+
+    _vhdl = ''
+    _vhdl += '%s%s: process( %s )\n' % (make_indent(1), name, ', '.join(sensitivity_list))
+    _vhdl += '%sbegin\n' % make_indent(1)
+    if reset:
+        # todo: handle reset in async process
+        pass
+    _vhdl += '%s\n' % ('\n'.join(lines))
+    if reset:
         _vhdl += '%send if;\n' % make_indent(2);
-        _vhdl += '%send process;\n' % make_indent(1)
+    _vhdl += '%send process;\n\n' % make_indent(1)
 
-        tokens['procedures'][i]['vhdl'] = _vhdl
+    tokens['procedures'][i]['vhdl'] = _vhdl
+
+    return tokens
+
+def compile_procedures(tokens):
+
+    for i in range(0, len(tokens['procedures'])):
+        if tokens['procedures'][i]['proc_type'] == 'sync':
+            tokens = compile_sync_proceedure(i, tokens)
+        elif tokens['procedures'][i]['proc_type'] == 'async':
+            tokens = compile_async_procedure(i, tokens)
 
     return tokens
 
@@ -134,6 +225,8 @@ def populate_template(tokens):
     for assignment in tokens['assignments']:
         assignments = '%s%s\n' % (HEADER, assignment['vhdl'])
     instantiations = ''
+    for component in tokens['components']:
+        instantiations += component['vhdl']
     procedures = ''
     for procedure in tokens['procedures']:
         procedures += procedure['vhdl'] 
@@ -170,6 +263,8 @@ def do_compile(filename):
 
     tokens = compile_ports(tokens)
 
+    tokens = compile_instantiations(tokens)
+
     tokens = compile_procedures(tokens)
 
     vhdl = populate_template(tokens)
@@ -182,9 +277,9 @@ def do_compile(filename):
 
 if __name__ == '__main__':
 
-    vhdl = do_compile('counter32.chdl')
+    vhdl = do_compile('./lib/chdl/basic/pwm.chdl')
 
     print(vhdl)
 
-    with open('counter32.vhd', 'w') as f:
+    with open('./lib/chdl/basic/pwm.vhd', 'w') as f:
         f.write(vhdl)
