@@ -359,6 +359,8 @@ def tokenize(filename, verbose=False):
 
     #log(TOKENIZER, DEBUG, 'tokens: \n%s' % json.dumps(tokens, indent=4))
 
+    #raise Exception('debug')
+
     return tokens
         
 

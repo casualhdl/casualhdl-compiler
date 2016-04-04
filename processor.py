@@ -63,7 +63,7 @@ def decode_value(value, name, tokens):
     if signal['type'] == 'std_logic_vector':
         # get total width of vector
         width = abs(int(signal['left'])) + abs(int(signal['right'])) +  1
-        print('width: %i' % width)
+        #print('width: %i' % width)
 
     val = ''
     if signal['type'] == 'std_logic':
@@ -88,8 +88,8 @@ def decode_value(value, name, tokens):
 
         # all zeros
         elif value == 'zeros' or value == '0':
-            #val = '"%s"' % zero_extend('', width)
-            val = '(others => \'0\')';
+            val = '"%s"' % zero_extend('', width)
+            #val = '(others => \'0\')';
 
         # all zeros
         elif value == 'ones':
@@ -101,12 +101,12 @@ def decode_value(value, name, tokens):
             v = bin(int(value))[2:]
             val = '"%s"' % zero_extend(v, width)
 
-            print(value)
-            print(int(value))
-            print(bin(int(value)))
-            print(bin(int(value))[2:])
-            print(val)
-            print(json.dumps(signal, indent=4))
+            #print(value)
+            #print(int(value))
+            #print(bin(int(value)))
+            #print(bin(int(value))[2:])
+            #print(val)
+            #print(json.dumps(signal, indent=4))
 
             
     else:
@@ -130,6 +130,10 @@ def parse_conditional(line):
     subject = parts[1]
     operation = parts[2]
     value = parts[3]
+
+    if '.' in subject:
+        parts = subject.split('.')
+        subject = '%s_%s' % (parts[0], parts[1])
 
     return subject, operation, value
 
@@ -388,7 +392,7 @@ def pre_process_ports(tokens):
         'inout': 'io',
     }
 
-    print(json.dumps(tokens, indent=4))
+    #print(json.dumps(tokens, indent=4))
 
     for i in range(0, len(tokens['ports']['signals'])):
         name = tokens['ports']['signals'][i]['name']
@@ -471,7 +475,11 @@ def process_lines(index, indent, procedure_index, tokens):
         line_number = _line['line_number']
         proc_type = tokens['procedures'][procedure_index]['proc_type']
 
-        log(PROCESSOR, DEBUG, 'Line: `%s`' % line)
+
+        log(PROCESSOR, DEBUG, '----------------')
+        log(PROCESSOR, DEBUG, 'Line:')
+        log(PROCESSOR, DEBUG, '%s' % line)
+        log(PROCESSOR, DEBUG, '')
 
         # process indents
         last_line_indent = line_indent
@@ -569,14 +577,30 @@ def process_lines(index, indent, procedure_index, tokens):
                 # it's a hard value, not a signal or port
                 decoded_value = decode_value(value, name, tokens)
 
+            _vhdl = 'if ( %s %s %s ) then' % (name, operation, decoded_value)
+
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'if',
                 'indent': line_indent,
                 'is_control_structure': True,
-                'vhdl': 'if ( %s %s %s ) then' % (name, operation, decoded_value),
+                'vhdl': _vhdl,
             }
 
             i, tokens = process_lines(i+1, line_indent+1, procedure_index, tokens)
+
+            # insert a bogus end if so we can track it later on
+            tokens['procedures'][procedure_index]['lines'].insert(i+1, {
+                'line_number': -1,
+                'line': '',
+                'vhdl': {
+                    'command': 'endif',
+                    'indent': line_indent,
+                    'is_control_structure': True,
+                    'vhdl': 'end if;' # -- %s' % _vhdl,
+                }
+            })
+
+            i += 1 
 
         # elif control structure
         elif '    elsif ' in line:
@@ -607,28 +631,60 @@ def process_lines(index, indent, procedure_index, tokens):
                 # it's a hard value, not a signal or port
                 decoded_value = decode_value(value, name, tokens)
 
+            _vhdl = 'elsif ( %s %s %s ) then' % (name, operation, decoded_value)
+
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'elsif',
                 'indent': line_indent,
                 'is_control_structure': True,
-                'vhdl': 'elsif ( %s %s %s ) then' % (name, operation, decoded_value),
+                'vhdl': _vhdl,
             }
 
             i, tokens = process_lines(i+1, line_indent+1, procedure_index, tokens)
+
+            # insert a bogus end if so we can track it later on
+            tokens['procedures'][procedure_index]['lines'].insert(i+1, {
+                'line_number': -1,
+                'line': '',
+                'vhdl': {
+                    'command': 'endif',
+                    'indent': line_indent,
+                    'is_control_structure': True,
+                    'vhdl': 'end if;', # -- %s' % _vhdl,
+                }
+            })
+
+            i += 1 
 
         # else control structure
         elif '    else:' in line:
 
             log(PROCESSOR, INFO, '`else` control structure found')
 
+            _vhdl = 'else'
+
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'else',
                 'indent': line_indent,
                 'is_control_structure': True,
-                'vhdl': 'else',
+                'vhdl': _vhdl,
             }
 
             i, tokens = process_lines(i+1, line_indent+1, procedure_index, tokens)
+
+            # insert a bogus end if so we can track it later on
+            tokens['procedures'][procedure_index]['lines'].insert(i+1, {
+                'line_number': -1,
+                'line': '',
+                'vhdl': {
+                    'command': 'endif',
+                    'indent': line_indent,
+                    'is_control_structure': True,
+                    'vhdl': 'end if;' # -- %s' % _vhdl,
+                }
+            })
+
+            i += 1 
 
         # case control structure
         elif '    case ' in line:
@@ -737,6 +793,8 @@ def process_lines(index, indent, procedure_index, tokens):
                 break;
 
         i += 1
+
+    log(PROCESSOR, DEBUG, 'done with processing lines at indent: %i' % line_indent)
 
     return i, tokens
 

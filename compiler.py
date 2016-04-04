@@ -15,6 +15,25 @@ import time
 
 from processor import process
 
+class Stack:
+     def __init__(self):
+         self.items = []
+
+     def isEmpty(self):
+         return self.items == []
+
+     def push(self, item):
+         self.items.append(item)
+
+     def pop(self):
+         return self.items.pop()
+
+     def peek(self):
+         return self.items[len(self.items)-1]
+
+     def size(self):
+         return len(self.items)
+
 def make_indent(indent):
     retval = ''
     for i in range(0, indent):
@@ -70,27 +89,31 @@ def compile_instantiations(tokens):
 
         library = tokens['components'][i]['library'].replace('.','_')
         name = '%s_%s' % (library, tokens['components'][i]['name'])
-        _vhdl += '%sinst_%s: entity work.%s ( behavioral )\n' % (make_indent(1), name, name)
+        _vhdl += '%sinst_%s: entity work.%s ( behavioral )\n' % (make_indent(1), name, library)
         _vhdl += '%sport map(\n' % make_indent(1) 
         
         _vhdl += '\n%s-- clocks\n' % make_indent(2)
         if len(tokens['components'][i]['ports']['clocks']) != 0:
-            _vhdl += '%s%s <= %s,\n' % (make_indent(2), tokens['components'][i]['ports']['clocks'][0]['name'], tokens['ports']['clocks'][0]['name'])
+            _vhdl += '%s%s => %s,\n' % (make_indent(2), tokens['components'][i]['ports']['clocks'][0]['name'], tokens['ports']['clocks'][0]['name'])
         
         _vhdl += '\n%s-- resets\n' % make_indent(2)
         if len(tokens['components'][i]['ports']['resets']) != 0:
-            _vhdl += '%s%s <= %s,\n' % (make_indent(2), tokens['components'][i]['ports']['resets'][0]['name'], tokens['ports']['resets'][0]['name'])
+            _vhdl += '%s%s => %s,\n' % (make_indent(2), tokens['components'][i]['ports']['resets'][0]['name'], tokens['ports']['resets'][0]['name'])
         
         _vhdl += '\n%s-- interface ports\n' % make_indent(2)
         for signal in tokens['components'][i]['ports']['signals']:
             signal_name = signal['name']
-            signal_signal_name = '%s_%s_s' % (name, '_'.join(signal['name'].split('_')[:-1]))
+            signal_signal_name = '%s_%s_s' % (tokens['components'][i]['name'], '_'.join(signal['name'].split('_')[:-1]))
             _vhdl += '%s%s => %s,\n' % (make_indent(2), signal_name, signal_signal_name)
+        # need to get ride of the last comma
+        _vhdl = '%s\n' % _vhdl[:-2]
         _vhdl += '\n%s);\n\n' % make_indent(1)
 
         tokens['components'][i]['vhdl'] = _vhdl
 
         #print _vhdl
+
+
 
     #print(json.dumps(tokens, indent=4))
     #raise Exception('debug')
@@ -121,7 +144,7 @@ def compile_sync_proceedure(i, tokens):
     for derived in tokens['procedures'][i]['defaults']['derived']:
         found = False
         if not (derived['name'] in derived_list):
-            print('adding "%s" to derived list' % derived['name'])
+            #print('adding "%s" to derived list' % derived['name'])
             derived_list.append(derived['name'])
             for defined in tokens['procedures'][i]['defaults']['defined']:
                 if derived['name'] == defined['name']:
@@ -136,6 +159,7 @@ def compile_sync_proceedure(i, tokens):
     _vhdl += '\n'
     _vhdl += '%s-- process logic\n' % make_indent(4)
     current_indent = -1 # small.
+    stack = Stack()
     for j in range(0, len(tokens['procedures'][i]['lines'])):
         _line = tokens['procedures'][i]['lines'][j]
         if 'vhdl' in _line:
@@ -143,29 +167,29 @@ def compile_sync_proceedure(i, tokens):
             #line_number = _line['line_number']
             vhdl = _line['vhdl']['vhdl']
             indent = _line['vhdl']['indent']
+            command = _line['vhdl']['command']
             is_control_structure = _line['vhdl']['is_control_structure']
 
-            _vhdl += '%s%s\n' % (make_indent(indent+3), vhdl)
+            # the processor has placed endif commands after each if control
+            # structure.  we need to deturmine which ones need to be removed
+            # since we're not done with the control structure tree
 
-            # if this line isn't a control structure ...
-            if not is_control_structure:
-
+            if command == 'endif':
                 _num_lines = len(tokens['procedures'][i]['lines'])
                 _indent = current_indent
                 _command = None
-                if (j+1) < len(tokens['procedures'][i]['lines']): 
+                if (j+1) < len(tokens['procedures'][i]['lines']):
                     _indent = tokens['procedures'][i]['lines'][j+1]['vhdl']['indent']
                     _command = tokens['procedures'][i]['lines'][j+1]['vhdl']['command']
+                if _command == 'elsif' or _command == 'else':
+                    pass
+                else:
+                    _vhdl += '%send if;\n' % (make_indent(indent+3))
 
+            else:
+                _vhdl += '%s%s\n' % (make_indent(indent+3), vhdl)
 
-                # and we're at the end of the file OR our indent is decreasing, AND
-                # there aren't any elsif or else then we need to close our control structure.
-                if ( j+1 == _num_lines or current_indent >  _indent ) and ( current_indent == _indent and _command != 'elsif' and _command != 'else' ):
-
-                    _vhdl += '%send if;\n' % make_indent(indent+2)
-
-            current_indent = indent
-
+            
     _vhdl += '\n%send if;\n' % make_indent(3);
     _vhdl += '%send if;\n' % make_indent(2);
     _vhdl += '%send process;\n' % make_indent(1)
@@ -184,7 +208,9 @@ def compile_async_procedure(i, tokens):
     for j in range(0, len(tokens['procedures'][i]['lines'])):
         vhdl = tokens['procedures'][i]['lines'][j]['vhdl']['vhdl']
         lines.append('%s%s' % (make_indent(2), vhdl))
-        sensitivity_list.append(vhdl.split('<=')[0].strip())
+        signal_name = vhdl.split('<=')[1].replace(';','').strip()
+        # todo: check to see if signal_name is actually a signal
+        sensitivity_list.append(signal_name)
 
     _vhdl = ''
     _vhdl += '%s%s: process( %s )\n' % (make_indent(1), name, ', '.join(sensitivity_list))
@@ -215,7 +241,8 @@ def populate_template(tokens):
 
     HEADER = '    '
 
-    entity_name = tokens['entity']
+    entity_name = '%s_%s' % (tokens['library'].replace('.','_'), tokens['entity'])
+    #entity_name = tokens['entity']
     ports = tokens['ports']['vhdl']
     components = ''
     signals = ''
@@ -259,7 +286,7 @@ def do_compile(filename):
     # get processed tokens
     tokens = process(filename)
 
-    log(COMPILER, DEBUG, 'post-processor tokens:\n%s' % json.dumps(tokens, indent=4))
+    #log(COMPILER, DEBUG, 'post-processor tokens:\n%s' % json.dumps(tokens, indent=4))
 
     tokens = compile_ports(tokens)
 
@@ -277,9 +304,11 @@ def do_compile(filename):
 
 if __name__ == '__main__':
 
-    vhdl = do_compile('./lib/chdl/basic/pwm.chdl')
+    filename = sys.argv[1]
+
+    vhdl = do_compile(filename) #'./lib/chdl/basic/pwm.chdl')
 
     print(vhdl)
 
-    with open('./lib/chdl/basic/pwm.vhd', 'w') as f:
+    with open('%s.vhd' % filename.split('.chdl')[0], 'w') as f: #'./lib/chdl/basic/pwm.vhd', 'w') as f:
         f.write(vhdl)
