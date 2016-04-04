@@ -1,0 +1,30 @@
+#
+# entity: counter8
+# description: basic 8 bit counter with reset and done pulse
+# author: Timothy Duffy ( tim@timduffy.me )
+#
+
+library chdl.basic
+entity counter16
+
+port clk = clock()
+port reset = reset()    
+port reset_count = bit()
+port max = vector(7, 0)
+port done = bit()
+
+var count = vector(7, 0)
+
+proc counter_decode = sync(clk, reset):
+    reset:
+        count = zeros
+        done = 0
+
+     done = 0
+
+    if reset_count = 1:
+        count = zeros
+    elsif count = max:
+        done = 1
+    else:
+        count++

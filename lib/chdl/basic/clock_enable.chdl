@@ -1,0 +1,29 @@
+#
+# entity: clock_enable
+# description: generates a clock enable pulse
+# author: Timothy Duffy ( tim@timduffy.me )
+#
+
+component chdl.basic.counter32 as counter
+
+library chdl.basic
+entity clock_enable
+
+port clk = clock()
+port reset = reset()
+port enable_count = vector(31, 0)
+port ce = bit()
+
+var count = vector(31, 0)
+
+proc enable_count_assignment = async():
+    counter.max = enable_count
+
+proc counter_decode = sync(clk, reset):
+    reset:
+        ce = 0
+    counter.reset_count = 0
+    ce = 0
+    if counter.done = 1:
+        counter.reset_count = 1
+        ce = 1
