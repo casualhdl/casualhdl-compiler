@@ -1,0 +1,47 @@
+#
+# entity: counter32
+# description: basic pwm module with setable high and low times
+# author: Timothy Duffy ( tim@timduffy.me )
+#
+
+library chdl.basic
+entity pwm
+
+component chdl.basic.counter32 as high_counter
+component chdl.basic.counter32 as low_counter
+
+port clk = clock()
+port reset = reset()
+# port enable = bit()
+port high_time = vector(31, 0)
+port low_time = vector(31, 0)
+port output = bit()
+
+var state = vector(1, 0)
+
+proc high_low_time_assignment = async():
+    high_counter.max = high_time
+    low_counter.max = low_time
+
+proc state_machine = sync(clk, reset):
+    reset:
+        state = 0
+        output = 0
+
+    high_counter.reset_count = 0
+    low_counter.reset_count = 0
+
+    if state = 0:
+        high_counter.reset_count = 1
+        low_counter.reset_count = 1
+        state = 1
+    elsif state = 1:
+        output = 1
+        low_counter.reset_count = 1
+        if high_counter.done = 1:
+            state = 2
+    elsif state = 2:
+        output = 0
+        high_counter.reset_count = 1
+        if low_counter.done = 1:
+            state = 1
