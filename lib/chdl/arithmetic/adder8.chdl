@@ -1,0 +1,20 @@
+#
+# entity: adder8
+# description: 8 bit adder
+# author: Timothy Duffy ( tim@timduffy.me )
+#
+
+library chdl.arithmetic
+entity adder8
+
+port clk = clock()
+port reset = reset()
+port a = vector(7, 0)
+port b = vector(7, 0)
+port sum = vector(7, 0)
+
+proc adder = sync(clk, reset):
+    reset:
+        sum = 0
+
+    sum = a + b

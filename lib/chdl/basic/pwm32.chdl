@@ -5,7 +5,7 @@
 #
 
 library chdl.basic
-entity pwm
+entity pwm32
 
 component chdl.basic.counter32 as high_counter
 component chdl.basic.counter32 as low_counter

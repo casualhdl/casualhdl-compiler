@@ -1,0 +1,20 @@
+#
+# entity: adder32
+# description: 32 bit adder
+# author: Timothy Duffy ( tim@timduffy.me )
+#
+
+library chdl.arithmetic
+entity adder32
+
+port clk = clock()
+port reset = reset()
+port a = vector(31, 0)
+port b = vector(31, 0)
+port sum = vector(31, o)
+
+proc adder = sync(clk, reset):
+    reset:
+        sum = 0
+
+    sum = a + b

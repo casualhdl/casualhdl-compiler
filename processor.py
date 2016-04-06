@@ -48,10 +48,6 @@ def one_extend(value, width):
 
 def decode_value(value, name, tokens):
 
-    #
-    # TODO: look for period, and then go find the type of the signal since
-    #       we're assigning something to a component instantiation
-    #
 
     signal = get_var_from_name(name, tokens)
     if not signal:
@@ -98,16 +94,21 @@ def decode_value(value, name, tokens):
         # decimal
         else:
 
-            v = bin(int(value))[2:]
-            val = '"%s"' % zero_extend(v, width)
+            try:
 
-            #print(value)
-            #print(int(value))
-            #print(bin(int(value)))
-            #print(bin(int(value))[2:])
-            #print(val)
-            #print(json.dumps(signal, indent=4))
+                v = bin(int(value))[2:]
+                val = '"%s"' % zero_extend(v, width)
 
+                #print(value)
+                #print(int(value))
+                #print(bin(int(value)))
+                #print(bin(int(value))[2:])
+                #print(val)
+                #print(json.dumps(signal, indent=4))
+
+            except:
+                val = None
+                pass
             
     else:
         # throw error
@@ -137,7 +138,7 @@ def parse_conditional(line):
 
     return subject, operation, value
 
-def parse_assignment(line):
+def parse_assignment(line, tokens):
 
     # todo: error checking
 
@@ -146,22 +147,99 @@ def parse_assignment(line):
     line = re.sub(' +', ' ', line)
 
     # break into parts
-    parts = line.split(' ')
+    parts = line.split(' = ')
 
     subject = parts[0]
-    value = parts[2]
+    value = parts[1]
 
-    # test to see if this is an assignment to a internal or port signal
-    # or if it is going to a component
-    if '.' in subject:
-        parts = subject.split('.')
-        subject = '%s_%s' % (parts[0], parts[1])
+    print('start:')
+    print(subject, value)
 
-    #print('----')
-    #print(subject, value)
-    #print('----')
+    tokens = update_port_direction(subject, 'out', tokens)
 
-    return subject, value
+    # the value may be a math operation and have multiple parts.
+    ops = ('+', '-', '*', '/')
+    if any( op in value for op in ops ):
+
+        print('math!')
+
+        # each of the parts needs to be decoded
+        things = value.split(' ')
+        print('things:', things)
+        _value = ''
+        for thing in things:
+
+            print('thing:', thing)
+            #print(thing)
+            print('get_port_from_name', get_port_from_name('%s_i' % thing, tokens))
+
+            # math operator
+            if any( op == thing for op in ops ):
+                _value += '%s ' % thing
+            
+                print(_value)                
+
+            #
+            # todo: need to figure out how to handle _i vs _io, because we don't know
+            #       the direction of the ports yet ..
+            #
+
+            # port (i or io)
+            elif not thing.isdigit() and ( get_port_from_name('%s' % thing, tokens) or get_port_from_name('%s_i' % thing, tokens) ):
+                print('port thing:', thing)
+                
+                _value += '%s_i ' % thing
+
+                print(_value)
+
+                tokens = update_port_direction(thing, 'in', tokens)
+
+                #print(json.dumps(tokens, indent=4))
+
+                #raise Exception('debug')
+
+            #elif not thing.isdigit() and get_port_from_name('%s_io' % thing, tokens):
+            #    _value += '%s_io ' % thing
+            
+            # var
+            elif not thing.isdigit() and ( get_var_from_name('%s' % thing, tokens) or get_var_from_name('%s_s' % thing, tokens) ):
+                
+                print('var thing:', thing)
+
+                _value += '%s_s ' % thing
+
+                print(_value)
+            
+            # a constant
+            else:
+
+                print('else thing:', thing)
+
+                name = decode_value(thing, subject, tokens)
+                name_s = decode_value(thing, '%s_s' % subject, tokens)
+
+                _value += '%s ' % name if name != None else name_s
+
+                print(_value)
+
+        #print(_value)
+
+        value = _value.strip()
+
+    else:
+    
+        # test to see if this is an assignment to a internal or port signal
+        # or if it is going to a component
+        if '.' in subject:
+            parts = subject.split('.')
+            subject = '%s_%s' % (parts[0], parts[1])
+
+    print('final:')
+    print(subject, value)
+
+    #raise Exception('debug')
+
+    return subject, value, tokens
 
 def get_type_from_name(name, tokens):
 
@@ -203,6 +281,7 @@ def get_port_from_name(name, tokens):
     found = False
     signal = None
     for _signal in tokens['ports']['signals']:
+        #print(_signal['name'], name)
         if name == _signal['name']:
             signal = _signal
             found = True
@@ -366,7 +445,7 @@ def pre_process_ports(tokens):
             elif ' = ' in line:
 
                 # parse the line
-                subject, value = parse_assignment(line)
+                subject, value, tokens = parse_assignment(line, tokens)
 
                 # check to see if the subject is a port ( out )
                 if get_type_from_name(subject, tokens) == 'port':
@@ -476,11 +555,10 @@ def process_lines(index, indent, procedure_index, tokens):
         proc_type = tokens['procedures'][procedure_index]['proc_type']
 
 
-        log(PROCESSOR, DEBUG, '----------------')
-        log(PROCESSOR, DEBUG, 'Line:')
-        log(PROCESSOR, DEBUG, '%s' % line)
-        log(PROCESSOR, DEBUG, '')
-
+        #log(PROCESSOR, DEBUG, '----------------')
+        log(PROCESSOR, DEBUG, 'Line: `%s`' % line)
+        #log(PROCESSOR, DEBUG, '%s' % line)
+        #log(PROCESSOR, DEBUG, '')
         # process indents
         last_line_indent = line_indent
         line_indent = get_indent(line)
@@ -510,7 +588,7 @@ def process_lines(index, indent, procedure_index, tokens):
                 line_number = _line['line_number']
                 reset_line_indent = get_indent(line)
 
-                subject, value = parse_assignment(line)
+                subject, value, tokens = parse_assignment(line, tokens)
 
                 # we can only ever assign a value to a signal, so we can make this
                 # assumption here.
@@ -701,11 +779,13 @@ def process_lines(index, indent, procedure_index, tokens):
 
             log(PROCESSOR, INFO, 'assignment found')
 
-            subject, value = parse_assignment(line)
+            subject, value, tokens = parse_assignment(line, tokens)
 
             # we can only ever assign a value to a signal, so we can make this
             # assumption here.
             name = '%s_s' % subject
+
+            decoded_value = decode_value(value, name, tokens)
 
             # the value could be a hard coded value, or it could be a signal or port
             if get_port_from_name('%s_i' % value, tokens):
@@ -715,9 +795,13 @@ def process_lines(index, indent, procedure_index, tokens):
             elif get_var_from_name('%s_s' % value, tokens):
                 decoded_value = '%s_s' % value
             else:
-                # it's a hard value, not a signal or port
-                decoded_value = decode_value(value, name, tokens)
-
+                if decoded_value != None:
+                    # it's a hard value, not a signal or port
+                    #decoded_value = decode_value(value, name, tokens)
+                    pass
+                else:
+                    # has math in it
+                    decoded_value = value
             _vhdl = '%s <= %s;' % (name, decoded_value)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {

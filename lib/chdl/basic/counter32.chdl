@@ -20,7 +20,7 @@ proc counter_decode = sync(clk, reset):
         count = zeros
         done = 0
 
-     done = 0
+    done = 0
 
     if reset_count = 1:
         count = zeros

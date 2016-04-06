@@ -9,7 +9,7 @@ DEBUG = 8
 
 TOKENIZER = 'tokenizer'
 PROCESSOR = 'processor'
-COMPILER = 'compiler'
+COMPILER =  'compiler '
 
 
 def log_lut(level):
