@@ -11,7 +11,7 @@ port clk = clock()
 port reset = reset()
 port a = vector(31, 0)
 port b = vector(31, 0)
-port sum = vector(31, o)
+port sum = vector(31, 0)
 
 proc adder = sync(clk, reset):
     reset:

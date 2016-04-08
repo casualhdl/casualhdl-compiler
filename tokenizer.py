@@ -113,7 +113,7 @@ def tokenize(filename, verbose=False):
                         pass
                     else:
                         tokens['ports']['clocks'].append({
-                            'name': '%s_i' % name,
+                            'name': name, #'%s_i' % name,
                             'vhdl': '',
                         })
                 elif rest_parts[0] == 'reset':
@@ -125,7 +125,7 @@ def tokenize(filename, verbose=False):
                         pass
                     else:
                         tokens['ports']['resets'].append({
-                            'name': '%s_i' % name,
+                            'name': name, #'%s_i' % name,
                             'vhdl': '',
                         })
                 elif rest_parts[0] == 'bit':
@@ -210,7 +210,7 @@ def tokenize(filename, verbose=False):
                     else:
                         # note: we add `_s` to the end of all signals
                         tokens['vars'].append({
-                            'name': '%s_s' % name,
+                            'name': name, #'%s_s' % name,
                             'type': 'std_logic',
                             'left': None,
                             'right': None,
@@ -235,7 +235,7 @@ def tokenize(filename, verbose=False):
                             right = inside.split(',')[1].strip()
                         # note: we add `_s` to the end of all signals
                         tokens['vars'].append({
-                            'name': '%s_s' % name,
+                            'name': name, #'%s_s' % name,
                             'type': 'std_logic_vector',
                             'left': left,
                             'right': right,
@@ -277,16 +277,26 @@ def tokenize(filename, verbose=False):
             rest_parts = rest.replace(' ','').split('(')
             proc_type = rest_parts[0].strip()
             inside = rest.split('(')[1].split(')')[0]
+            
+            #reset_name = ''
+            #if len(inside.split(',')) > 1:
+            #    reset_name = inside.split(',')[1].strip()
+            
+            first = inside.split(',')[0].strip()
+            second = ''
+            if len(inside.split(',')) > 1:
+                second = inside.split(',')[1].strip()
+
             if proc_type == 'sync':
-                clock = '%s_i' % inside.split(',')[0].strip()
-                reset = None
-                if inside != '':
-                    reset = '%s_i' % inside.split(',')[1].strip()
+                clock = first
+                reset = second
+                #if inside != '':
+                #    reset = reset_name #'%s_i' % inside.split(',')[1].strip()
             elif proc_type == 'async':
                 clock = None
-                reset = None
-                if inside.strip() != '':
-                    reset = '%s_i' % inside.split(',')[0].strip()
+                reset = first
+                #if inside.strip() != '':
+                #    reset = reset_name #'%s_i' % inside.split(',')[0].strip()
             else:
                 # todo: throw error
                 pass

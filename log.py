@@ -7,9 +7,10 @@ ERROR = 2
 WARNING = 4
 DEBUG = 8
 
-TOKENIZER = 'tokenizer'
-PROCESSOR = 'processor'
-COMPILER =  'compiler '
+TOKENIZER    = 'tokenizer    '
+PRE_PROCESSOR = 'pre-processor'
+PROCESSOR    = 'processor    '
+COMPILER     = 'compiler     '
 
 
 def log_lut(level):

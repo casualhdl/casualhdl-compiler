@@ -14,19 +14,14 @@ import re
 import sys
 import time
 
-from tokenizer import tokenize
+from pre_processor import pre_process
 
-def get_indent(line):
-    i = 0
-    for c in line:
-        if c != ' ':
-            break
-        i += 1 
-    if i % 4 != 0:
-        # throw error
-        pass
-    indent = i / 4
-    return indent
+dir_lut = {
+    'in': 'i',
+    'out': 'o',
+    'inout': 'io',
+}
+
 
 def zero_extend(value, width):
 
@@ -46,15 +41,228 @@ def one_extend(value, width):
 
     return v
 
+def get_indent(line):
+    i = 0
+    for c in line:
+        if c != ' ':
+            break
+        i += 1 
+    if i % 4 != 0:
+        # throw error
+        pass
+    indent = i / 4
+    return indent
+
+def filename_from_component(component):
+
+    name = component['name']
+    library = component['library']
+    parts = library.split('.')
+
+    filename = os.path.join(parts[0], parts[1], '%s.chdl' % parts[2])
+
+    return filename
+
+def parse_reset_assignment(line, tokens):
+
+    # todo: error checking
+
+    # pre-process line
+    line = line.strip()
+    line = re.sub(' +', ' ', line)
+    #line = ''.join(line.split(':')[:-1])
+
+    # break into parts
+    parts = line.split(' = ')
+    subject = parts[0]
+    value = parts[1] 
+
+    # the subject could be a component port
+    if '.' in subject:
+        parts = subject.split('.')
+        subject = '%s_%s' % (parts[0], parts[1])
+
+    # the value could be a component port
+    if '.' in value:
+        parts = value.split('.')
+        value = '%s_%s' % (parts[0], parts[1])        
+
+    decoded_value = decode_value(value, subject, tokens)
+
+    if not decoded_value:
+        decoded_value = value
+
+    return subject, decoded_value
+
+def parse_assignment(line, tokens):
+
+    line = line.strip()
+    line = re.sub(' +', ' ', line)
+    
+    subject = line.split('=')[0].strip()
+
+    log(PROCESSOR, DEBUG, 'assignment: %s' % subject)
+
+    # the subject could be a component port
+    if '.' in subject:
+        parts = subject.split('.')
+        subject = '%s_%s' % (parts[0], parts[1])
+
+    log(PROCESSOR, DEBUG, '\tsubject: %s' % subject)
+
+    _values = line.split('=')[1].strip().split(' ')
+
+    ops = ('-','+', '*', '/')
+
+    vhdl = ''
+    for value in _values:
+        decoded_value = decode_value(value, subject, tokens)
+        
+        log(PROCESSOR, DEBUG, '\t\tvalue:         %s' % value)
+        log(PROCESSOR, DEBUG, '\t\tdecoded_value: %s' % decoded_value)
+        log(PROCESSOR, DEBUG, '\t\t')
+
+        port_signal = get_port_signal_from_name(value, tokens)
+        if port_signal:
+            _value = port_signal
+        else:
+            _value = '%s_s' % value
+
+        # math operation
+        if value in ops:
+            vhdl += '%s ' % value
+
+        # constant
+        elif decoded_value:
+            vhdl += '%s ' % decoded_value
+
+        # indexed signal
+        elif '[' in _value and ']' in _value:
+            signal_name = '%s_s' % _value.split('[')[0]
+            left = _value.split('[')[1].split(':')[0].strip()
+            right = _value.split('[')[1].split(':')[1].strip()
+            if '.' in _value.split('[')[0]:
+                parts = _value.split('[')[0].split('.')
+                signal_name = '%s_%s ' % (parts[0], parts[1])
+            vhdl += '%s_s(%s downto %s) ' % (signal_name, left, right)
+
+        # signal
+        else:
+            log(PROCESSOR, DEBUG, '\t\t\tvalue is signal or port')
+            signal_name = _value
+            if '.' in value:
+                parts = _value.split('.')
+                signal_name = '%s_%s ' % (parts[0], parts[1])
+            
+        
+            vhdl += '%s ' % signal_name
+
+    # remove last space, and put semi colon at end of line
+    vhdl = '%s_s <= %s;' % (subject, vhdl[:-1])
+
+    log(PROCESSOR, DEBUG, 'assignment: %s' % subject)
+    log(PROCESSOR, DEBUG, '\tchdl: %s' % line)
+    log(PROCESSOR, DEBUG, '\tvhdl: %s' % vhdl)
+
+    return subject, vhdl
+
+def parse_conditional(cmd, line, tokens):
+
+    # todo: error checking
+
+    # pre-process line
+    line = line.strip()
+    line = re.sub(' +', ' ', line)
+    line = ''.join(line.split(':')[:-1])
+        
+    # break into parts
+    parts = line.split(' ')
+    subject = parts[1]
+    value = parts[3]
+    op = parts[2]    
+
+    # the subject could be a component port
+    if '.' in subject:
+        parts = subject.split('.')
+        subject = '%s_%s' % (parts[0], parts[1])
+
+    # the value could be a component port
+    if '.' in value:
+        parts = value.split('.')
+        value = '%s_%s' % (parts[0], parts[1])        
+
+    decoded_value = decode_value(value, subject, tokens)
+
+    # it may not be a constant, may be a signal
+    if not decoded_value:
+        found = False
+        port_signal = get_port_signal_from_name(value, tokens)
+        
+        # in or inout port?
+        if port_signal:
+            found = True
+            decoded_value = port_signal
+
+        # signal
+        else:
+            decoded_value = '%s_s' % value
+
+    port_signal = get_port_signal_from_name(subject, tokens)
+
+    subject = '%s_s' % subject
+    if port_signal:
+        subject = port_signal
+
+    vhdl = '%s ( %s %s %s ) then' % (cmd, subject, op, decoded_value)
+
+    log(PROCESSOR, DEBUG, 'conditional: %s' % subject)
+    log(PROCESSOR, DEBUG, '\tchdl: %s' % line)
+    log(PROCESSOR, DEBUG, '\tvhdl: %s' % vhdl)
+
+    return subject, vhdl
+
+def get_port_signal_from_name(name, tokens):
+
+    signal_name = None
+    for port_signal in tokens['ports']['signals']:
+        if port_signal['name'] == name:
+            signal_name = '%s_%s' % (name, dir_lut[port_signal['direction']])
+            break
+
+    return signal_name
+
 def decode_value(value, name, tokens):
 
+    signal = None
+    
+    log(PROCESSOR, DEBUG, 'decoding value: %s, name: %s' % (value, name))
 
-    signal = get_var_from_name(name, tokens)
+    # port?
+    for port_signal in tokens['ports']['signals']:
+        if port_signal['name'] == name:
+            log(PROCESSOR, DEBUG, '\tassignment decoded as port')
+            signal = port_signal
+            break
+
+    # var?
     if not signal:
-        signal = get_port_from_name(name, tokens)
-        if not signal:
-            # it's possible it's a signal or an input
-            return None
+        log(PROCESSOR, DEBUG, '\tassignment is not a port')
+        for var in tokens['vars']:
+            if var['name'] == name:
+                log(PROCESSOR, DEBUG, '\tassignment decoded as var')
+                signal = var
+                break
+
+    if not signal:
+        log(PROCESSOR, DEBUG, '\tvalue could not be decoded')
+        log(PROCESSOR, DEBUG, '\tvars: %s' % json.dumps(tokens['vars'], indent=4))
+        return None
+
+    #if not signal:
+    #    signal = get_port_from_name(name, tokens)
+    #    if not signal:
+    #        # it's possible it's a signal or an input
+    #        return None
 
     if signal['type'] == 'std_logic_vector':
         # get total width of vector
@@ -68,14 +276,15 @@ def decode_value(value, name, tokens):
     elif signal['type'] == 'std_logic_vector':
 
         # binary value
-        if '"' in value:
+        if value[:2] == '0b':
             # we need to zero extend in the event that it isn't
             # the right widt
+            v = bin(int(value))[2:]
             val = value.replace('"','')
             val = '"%s"' % zero_extend(v, width)
 
         # hex
-        elif '0x' in value:
+        elif value[:2] == '0x':
 
             # todo: truncate or convert to binary if needed due to incorrect width
 
@@ -95,7 +304,7 @@ def decode_value(value, name, tokens):
         else:
 
             try:
-
+            #if True:
                 v = bin(int(value))[2:]
                 val = '"%s"' % zero_extend(v, width)
 
@@ -106,7 +315,7 @@ def decode_value(value, name, tokens):
                 #print(val)
                 #print(json.dumps(signal, indent=4))
 
-            except:
+            except Exception as ex:
                 val = None
                 pass
             
@@ -114,428 +323,9 @@ def decode_value(value, name, tokens):
         # throw error
         pass
 
+    log(PROCESSOR, DEBUG, '\tdecoded value: %s' % val)
+
     return val
-
-def parse_conditional(line):
-
-    # todo: error checking
-
-    # pre-process line
-    line = line.strip()
-    line = re.sub(' +', ' ', line)
-    line = ''.join(line.split(':')[:-1])
-    
-    # break into parts
-    parts = line.split(' ')
-
-    subject = parts[1]
-    operation = parts[2]
-    value = parts[3]
-
-    if '.' in subject:
-        parts = subject.split('.')
-        subject = '%s_%s' % (parts[0], parts[1])
-
-    return subject, operation, value
-
-def parse_assignment(line, tokens):
-
-    # todo: error checking
-
-    # pre-process line
-    line = line.strip()
-    line = re.sub(' +', ' ', line)
-
-    # break into parts
-    parts = line.split(' = ')
-
-    subject = parts[0]
-    value = parts[1]
-
-    print('start:')
-    print(subject, value)
-
-    tokens = update_port_direction(subject, 'out', tokens)
-
-    # the value may be a math operation and have multiple parts.
-    ops = ('+', '-', '*', '/')
-    if any( op in value for op in ops ):
-
-        print('math!')
-
-        # each of the parts needs to be decoded
-        things = value.split(' ')
-        print('things:', things)
-        _value = ''
-        for thing in things:
-
-            print('thing:', thing)
-            #print(thing)
-            print('get_port_from_name', get_port_from_name('%s_i' % thing, tokens))
-
-            # math operator
-            if any( op == thing for op in ops ):
-                _value += '%s ' % thing
-            
-                print(_value)                
-
-            #
-            # todo: need to figure out how to handle _i vs _io, because we don't know
-            #       the direction of the ports yet ..
-            #
-
-            # port (i or io)
-            elif not thing.isdigit() and ( get_port_from_name('%s' % thing, tokens) or get_port_from_name('%s_i' % thing, tokens) ):
-                print('port thing:', thing)
-                
-                _value += '%s_i ' % thing
-
-                print(_value)
-
-                tokens = update_port_direction(thing, 'in', tokens)
-
-                #print(json.dumps(tokens, indent=4))
-
-                #raise Exception('debug')
-
-            #elif not thing.isdigit() and get_port_from_name('%s_io' % thing, tokens):
-            #    _value += '%s_io ' % thing
-            
-            # var
-            elif not thing.isdigit() and ( get_var_from_name('%s' % thing, tokens) or get_var_from_name('%s_s' % thing, tokens) ):
-                
-                print('var thing:', thing)
-
-                _value += '%s_s ' % thing
-
-                print(_value)
-            
-            # a constant
-            else:
-
-                print('else thing:', thing)
-
-                name = decode_value(thing, subject, tokens)
-                name_s = decode_value(thing, '%s_s' % subject, tokens)
-
-                _value += '%s ' % name if name != None else name_s
-
-                print(_value)
-
-        #print(_value)
-
-        value = _value.strip()
-
-    else:
-    
-        # test to see if this is an assignment to a internal or port signal
-        # or if it is going to a component
-        if '.' in subject:
-            parts = subject.split('.')
-            subject = '%s_%s' % (parts[0], parts[1])
-
-    print('final:')
-    print(subject, value)
-
-    #raise Exception('debug')
-
-    return subject, value, tokens
-
-def get_type_from_name(name, tokens):
-
-    found = False
-    assignment_type = None
-    for _signal in tokens['ports']['signals']:
-        if name == _signal['name']:
-            assignment_type = 'port'
-            found = True
-            break
-        
-    if not found:
-        for _signal in tokens['vars']:
-            if name == _signal['name']:
-                assignment_type = 'var'
-                found = True
-                break
-
-    return assignment_type
-
-def get_var_from_name(name, tokens):
-
-    found = False
-    signal = None
-    for _signal in tokens['vars']:
-        if name == _signal['name']:
-            signal = _signal
-            found = True
-            break
-
-    if not found:
-        # todo: throw error
-        pass
-
-    return signal
-
-def get_port_from_name(name, tokens):
-
-    found = False
-    signal = None
-    for _signal in tokens['ports']['signals']:
-        #print(_signal['name'], name)
-        if name == _signal['name']:
-            signal = _signal
-            found = True
-            break
-
-    if not found:
-        # todo: throw error
-        pass
-
-    return signal
-
-def update_port_direction(name, direction, tokens):
-
-    found = False
-    for i in range(0, len(tokens['ports']['signals'])):
-        if name == tokens['ports']['signals'][i]['name']:
-            found = True
-            if tokens['ports']['signals'][i]['direction'] != None and ( \
-                    (tokens['ports']['signals'][i]['direction'] == 'in' and \
-                    direction == 'out') or \
-                    (   tokens['ports']['signals'][i]['direction'] == 'out' and \
-                    direction == 'in') ):
-
-                # we've already set our direction to `in` or `out`, and we're 
-                # trying to set it to the oposite.
-                tokens['ports']['signals'][i]['direction'] = 'inout'
-
-            else:
-
-                # there is no direction set, or we've already set it to what
-                # we're trying to set it to.
-                tokens['ports']['signals'][i]['direction'] = direction
-
-            break
-
-    if not found:
-        # todo: throw error
-        pass
-
-    return tokens
-
-def filename_from_component(component):
-
-    name = component['name']
-    library = component['library']
-    parts = library.split('.')
-
-    filename = os.path.join(parts[0], parts[1], '%s.chdl' % parts[2])
-
-    return filename
-
-def process_components(tokens, lib_dirs):
-
-    '''
-    casualhdl will go and process all of the components that are used in
-    the file.
-    '''   
-
-    components = []
-
-    for i in range(0, len(tokens['components'])):
-        component = tokens['components'][i]
-        filename = filename_from_component(component)
-
-        for lib_dir in lib_dirs:
-            full_filename = '%s/%s' % (lib_dir, filename)
-            if os.path.isfile(full_filename):
-
-                _tokens = process(full_filename)       
-
-                components.append({
-                    'name': component['name'],
-                    'entity': _tokens['entity'],
-                    'library': _tokens['library'],
-                    'ports': _tokens['ports'],
-                })
-
-                tokens['components'][i]['ports'] = _tokens['ports']
-
-
-    for component in components:
-        '''
-        for clock in component['ports']['clocks']:
-            clock_name = '_'.join(clock['name'].split('_')[:-1])
-            tokens['vars'].append({
-                'name': '%s_%s_s' % (component['name'], clock_name),
-                'type': 'std_logic', 
-                'left': None,
-                'right': None,
-                'output_register': None, 
-                'vhdl': '',
-            })
-        for reset in component['ports']['resets']:
-            reset_name = '_'.join(reset['name'].split('_')[:-1])
-            tokens['vars'].append({
-                'name': '%s_%s_s' % (component['name'], reset_name),
-                'type': 'std_logic', 
-                'left': None,
-                'right': None,
-                'output_register': None, 
-                'vhdl': '',
-            })
-        '''
-        for signal in component['ports']['signals']:
-            signal_name = '_'.join(signal['name'].split('_')[:-1])
-            tokens['vars'].append({
-                'name': '%s_%s_s' % (component['name'], signal_name),
-                'type': signal['type'], 
-                'left': signal['left'],
-                'right': signal['right'],
-                'output_register': None, 
-                'vhdl': '',
-            })
-
-    #print(json.dumps(components, indent=4))
-
-    #print(json.dumps(tokens, indent=4))
-
-    #if len(components) != 0:
-    #    raise Exception('debug')
-
-    return tokens
-
-def pre_process_ports(tokens):
-
-    '''
-    Do a first pass through all of the lines of each of the procedures to 
-    figure out what direction each port needs to be.
-    '''
-
-    for procedure in tokens['procedures']:
-        for _line in procedure['lines']:
-
-            # pull apart the line
-            line_number = _line['line_number']
-            line = _line['line']
-
-            # the line is a control structure with a condition
-            if '    if ' in line or '    elsif ' in line:
-
-                # parse the line
-                subject, operation, value = parse_conditional(line)
-
-                # check to see if the subject is a port ( in )
-                if get_type_from_name(subject, tokens) == 'port':
-                    tokens = update_port_direction(subject, 'in', tokens)
-
-                # check to see if the value is a port ( in )
-                if get_type_from_name(value, tokens) == 'port':
-                    tokens = update_port_direction(value, 'in', tokens)                
-
-
-            # the line is a case control structure
-            elif '    case ' in line:
-                
-                # todo: parse case line
-
-                pass
-
-            # there is an assignment
-            elif ' = ' in line:
-
-                # parse the line
-                subject, value, tokens = parse_assignment(line, tokens)
-
-                # check to see if the subject is a port ( out )
-                if get_type_from_name(subject, tokens) == 'port':
-                    tokens = update_port_direction(subject, 'out', tokens)
-
-                # check to see if the value is a port ( in )
-                if get_type_from_name(value, tokens) == 'port':
-                    tokens = update_port_direction(value, 'in', tokens)
-
-            # the line does not involve a port
-            else:
-                # nothing to do
-                pass
-
-    # now that we have the directions, we can update the names of the ports to reflect
-    # the names they'll have in VHDL.
-    #
-    # additionally, all outputs will get a registering signal for later assignments
-
-    dir_lut = {
-        'in': 'i',
-        'out': 'o',
-        'inout': 'io',
-    }
-
-    #print(json.dumps(tokens, indent=4))
-
-    for i in range(0, len(tokens['ports']['signals'])):
-        name = tokens['ports']['signals'][i]['name']
-        direction = tokens['ports']['signals'][i]['direction']
-        type_ = tokens['ports']['signals'][i]['type']
-        left = tokens['ports']['signals'][i]['left']
-        right = tokens['ports']['signals'][i]['right']
-        tokens['ports']['signals'][i]['name'] = '%s_%s' % (name, dir_lut[direction])
-
-        if direction == 'out':
-            tokens['vars'].append({
-                'name': '%s_s' % name,
-                'type': type_,
-                'left': left,
-                'right': right,
-                'output_register': '%s_o' % name,
-            })
-
-    return tokens
-
-def process_ports(tokens):
-
-    tokens = pre_process_ports(tokens)
-    
-    for i in range(0, len(tokens['ports']['clocks'])):
-        tokens['ports']['clocks'][i]['vhdl'] = '%s : in std_logic;' % tokens['ports']['clocks'][i]['name']
-        
-    for i in range(0, len(tokens['ports']['resets'])):
-        tokens['ports']['resets'][i]['vhdl'] = '%s : in std_logic;' % tokens['ports']['resets'][i]['name']
-
-    for i in range(0, len(tokens['ports']['signals'])):
-        name = tokens['ports']['signals'][i]['name']
-        type_ = tokens['ports']['signals'][i]['type']
-        direction = tokens['ports']['signals'][i]['direction']
-        left = tokens['ports']['signals'][i]['left']
-        right = tokens['ports']['signals'][i]['right']
-        if type_ == 'std_logic':
-            tokens['ports']['signals'][i]['vhdl'] = '%s : %s std_logic;' % (name, direction)
-        elif type_ == 'std_logic_vector':
-            tokens['ports']['signals'][i]['vhdl'] = "%s : %s std_logic_vector(%s downto %s);" % (name, direction, left, right)
-        else:
-            # todo: throw error
-            pass
-
-    return tokens
-
-def process_vars(tokens):
-
-    #tokens = pre_process_ports(tokens)
-    
-    for i in range(0, len(tokens['vars'])):
-        name = tokens['vars'][i]['name']
-        type_ = tokens['vars'][i]['type']
-        left = tokens['vars'][i]['left']
-        right = tokens['vars'][i]['right']
-        if type_ == 'std_logic':
-            tokens['vars'][i]['vhdl'] = '%s : std_logic;' % name
-        elif type_ == 'std_logic_vector':
-            tokens['vars'][i]['vhdl'] = "%s : std_logic_vector(%s downto %s);" % (name, left, right)
-        else:
-            # todo: throw error
-            pass
-
-    return tokens
 
 def process_lines(index, indent, procedure_index, tokens):
 
@@ -543,6 +333,8 @@ def process_lines(index, indent, procedure_index, tokens):
 
     vhdl = ''
     line_indent = sys.maxsize # big.
+
+    
 
     i = index
     while(True):
@@ -556,7 +348,7 @@ def process_lines(index, indent, procedure_index, tokens):
 
 
         #log(PROCESSOR, DEBUG, '----------------')
-        log(PROCESSOR, DEBUG, 'Line: `%s`' % line)
+        log(PROCESSOR, DEBUG, 'Line: "%s"' % line)
         #log(PROCESSOR, DEBUG, '%s' % line)
         #log(PROCESSOR, DEBUG, '')
         # process indents
@@ -588,25 +380,14 @@ def process_lines(index, indent, procedure_index, tokens):
                 line_number = _line['line_number']
                 reset_line_indent = get_indent(line)
 
-                subject, value, tokens = parse_assignment(line, tokens)
+                subject, value = parse_reset_assignment(line, tokens)
 
-                # we can only ever assign a value to a signal, so we can make this
-                # assumption here.
-                name = '%s_s' % subject
-
-                # the value could be a hard coded value, or it could be a signal or port
-                if get_port_from_name('%s_i' % value, tokens):
-                    decoded_value = '%s_i' % value
-                elif get_port_from_name('%s_io' % value, tokens):
-                    decoded_value = '%s_io' % value
-                elif get_var_from_name('%s_s' % value, tokens):
-                    decoded_value = '%s_s' % value
-                else:
-                    # it's a hard value, not a signal or port
-                    decoded_value = decode_value(value, name, tokens)
+                #decoded_value = get_port_signal_from_name(subject, tokens)
+                #if not decoded_value:
+                #    decoded_value = decode_value(value, subject, tokens)
 
                 tokens['procedures'][procedure_index]['reset']['assignments'].append({
-                    'vhdl': '%s_s <= %s' % (subject, decoded_value),
+                    'vhdl': '%s_s <= %s' % (subject, value),
                 })
 
                 if i+1 == len(lines):
@@ -627,35 +408,9 @@ def process_lines(index, indent, procedure_index, tokens):
         # if control structure
         elif '    if ' in line:
 
-            log(PROCESSOR, INFO, '`if` control structure found')
+            log(PROCESSOR, INFO, '"if" control structure found')
 
-            # todo: handle just the name of the signal for true/false
-
-            # parse the line
-            subject, operation, value = parse_conditional(line)
-
-            # this could be a signal or an `in` or `inout` port.  we'll test if it's an input
-            # port first
-            if get_port_from_name('%s_i' % subject, tokens):
-                name = '%s_i' % subject
-            elif get_port_from_name('%s_io' % subject, tokens):
-                name = '%s_io' % subject
-            else:
-                # it's a signal, not a port
-                name = '%s_s' % subject
-
-            # the value could be a hard coded value, or it could be a signal or port
-            if get_port_from_name('%s_i' % value, tokens):
-                decoded_value = '%s_i' % value
-            elif get_port_from_name('%s_io' % value, tokens):
-                decoded_value = '%s_io' % value
-            elif get_var_from_name('%s_s' % value, tokens):
-                decoded_value = '%s_s' % value
-            else:
-                # it's a hard value, not a signal or port
-                decoded_value = decode_value(value, name, tokens)
-
-            _vhdl = 'if ( %s %s %s ) then' % (name, operation, decoded_value)
+            subject, _vhdl = parse_conditional('if', line, tokens)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'if',
@@ -674,7 +429,7 @@ def process_lines(index, indent, procedure_index, tokens):
                     'command': 'endif',
                     'indent': line_indent,
                     'is_control_structure': True,
-                    'vhdl': 'end if;' # -- %s' % _vhdl,
+                    'vhdl': 'end if;'
                 }
             })
 
@@ -683,33 +438,9 @@ def process_lines(index, indent, procedure_index, tokens):
         # elif control structure
         elif '    elsif ' in line:
 
-            log(PROCESSOR, INFO, '`elsif` control structure found')
+            log(PROCESSOR, INFO, '"elsif" control structure found')
 
-            # parse the line
-            subject, operation, value = parse_conditional(line)
-
-            # this could be a signal or an `in` or `inout` port.  we'll test if it's an input
-            # port first
-            if get_port_from_name('%s_i' % subject, tokens):
-                name = '%s_i' % subject
-            elif get_port_from_name('%s_io' % subject, tokens):
-                name = '%s_io' % subject
-            else:
-                # it's a signal, not a port
-                name = '%s_s' % subject
-
-            # the value could be a hard coded value, or it could be a signal or port
-            if get_port_from_name('%s_i' % value, tokens):
-                decoded_value = '%s_i' % value
-            elif get_port_from_name('%s_io' % value, tokens):
-                decoded_value = '%s_io' % value
-            elif get_var_from_name('%s_s' % value, tokens):
-                decoded_value = '%s_s' % value
-            else:
-                # it's a hard value, not a signal or port
-                decoded_value = decode_value(value, name, tokens)
-
-            _vhdl = 'elsif ( %s %s %s ) then' % (name, operation, decoded_value)
+            subject, _vhdl = parse_conditional('elsif', line, tokens)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'elsif',
@@ -728,7 +459,7 @@ def process_lines(index, indent, procedure_index, tokens):
                     'command': 'endif',
                     'indent': line_indent,
                     'is_control_structure': True,
-                    'vhdl': 'end if;', # -- %s' % _vhdl,
+                    'vhdl': 'end if;'
                 }
             })
 
@@ -737,7 +468,7 @@ def process_lines(index, indent, procedure_index, tokens):
         # else control structure
         elif '    else:' in line:
 
-            log(PROCESSOR, INFO, '`else` control structure found')
+            log(PROCESSOR, INFO, '"else" control structure found')
 
             _vhdl = 'else'
 
@@ -758,7 +489,7 @@ def process_lines(index, indent, procedure_index, tokens):
                     'command': 'endif',
                     'indent': line_indent,
                     'is_control_structure': True,
-                    'vhdl': 'end if;' # -- %s' % _vhdl,
+                    'vhdl': 'end if;'
                 }
             })
 
@@ -766,43 +497,20 @@ def process_lines(index, indent, procedure_index, tokens):
 
         # case control structure
         elif '    case ' in line:
-            log(PROCESSOR, INFO, '`case` control structure found')
+            log(PROCESSOR, INFO, '"case" control structure found')
             pass
 
         # fsm control structure
         elif '    fsm ' in line:
-            log(PROCESSOR, INFO, '`fsm` control structure found')
+            log(PROCESSOR, INFO, '"fsm" control structure found')
             pass
 
         # assignment
-        elif len(line.split('=')) != 1:
+        elif len(line.split(' = ')) != 1:
 
             log(PROCESSOR, INFO, 'assignment found')
 
-            subject, value, tokens = parse_assignment(line, tokens)
-
-            # we can only ever assign a value to a signal, so we can make this
-            # assumption here.
-            name = '%s_s' % subject
-
-            decoded_value = decode_value(value, name, tokens)
-
-            # the value could be a hard coded value, or it could be a signal or port
-            if get_port_from_name('%s_i' % value, tokens):
-                decoded_value = '%s_i' % value
-            elif get_port_from_name('%s_io' % value, tokens):
-                decoded_value = '%s_io' % value
-            elif get_var_from_name('%s_s' % value, tokens):
-                decoded_value = '%s_s' % value
-            else:
-                if decoded_value != None:
-                    # it's a hard value, not a signal or port
-                    #decoded_value = decode_value(value, name, tokens)
-                    pass
-                else:
-                    # has math in it
-                    decoded_value = value
-            _vhdl = '%s <= %s;' % (name, decoded_value)
+            subject, _vhdl = parse_assignment(line, tokens)
 
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'assignment',
@@ -819,7 +527,7 @@ def process_lines(index, indent, procedure_index, tokens):
                 # a derived default
 
                 tokens['procedures'][procedure_index]['defaults']['defined'].append({
-                    'name': name,
+                    'name': subject,
                     'vhdl': _vhdl,
                 })
 
@@ -829,10 +537,10 @@ def process_lines(index, indent, procedure_index, tokens):
                 # our derived list.  the compiler will choose to use it or not.
 
                 # default to its self so a register is born
-                _vhdl = _vhdl = '%s <= %s;' % (name, name)
+                _vhdl = '%s_s <= %s_s;' % (subject, subject)
 
                 tokens['procedures'][procedure_index]['defaults']['derived'].append({
-                    'name': name,
+                    'name': subject,
                     'vhdl': _vhdl,
                 })
 
@@ -841,13 +549,13 @@ def process_lines(index, indent, procedure_index, tokens):
 
             log(PROCESSOR, INFO, 'increment found.')
 
-            name = '%s_s' % line.strip().split('++')[0]         
+            name = '%s' % line.strip().split('++')[0]         
             
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'increment',
                 'indent': line_indent,
                 'is_control_structure': False,
-                'vhdl': '%s <= %s + \'1\';' % (name, name),
+                'vhdl': '%s_s <= %s_s + \'1\';' % (name, name),
             }
 
         # -1
@@ -855,13 +563,13 @@ def process_lines(index, indent, procedure_index, tokens):
 
             log(PROCESSOR, INFO, 'increment found.')
 
-            name = '%s_s' % line.strip().split('++')[0]         
+            name = '%s' % line.strip().split('++')[0]         
             
             tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
                 'command': 'decrement',
                 'indent': line_indent,
                 'is_control_structure': False,
-                'vhdl': '%s <= %s - \'1\';' % (name, name),
+                'vhdl': '%s_s <= %s_s - \'1\';' % (name, name),
             }
 
         if i+1 == len(lines):
@@ -888,44 +596,106 @@ def process_procedures(tokens):
 
         name = tokens['procedures'][i]['name']
         proc_type = tokens['procedures'][i]['proc_type']
-        clock = tokens['procedures'][i]['clock']
-        reset = tokens['procedures'][i]['reset']
 
-        log(PROCESSOR, INFO, 'processing procedure `%s`' % name)
-
+        log(PROCESSOR, INFO, 'processing procedure "%s"' % name)
+        
         if proc_type == 'async':
-
-            # process_lines(index, indent, procedure_index, tokens)
-
             _i, tokens = process_lines(0, 1, i, tokens)
-
         elif proc_type == 'sync':
-
-            # process_lines(index, indent, procedure_index, tokens)
-
             _i, tokens = process_lines(0, 1, i, tokens)
 
-        log(PROCESSOR, INFO, 'done processing procedure `%s`' % name)
+        log(PROCESSOR, INFO, 'done processing procedure "%s"' % name)
 
     return tokens
 
-
-
 def process_assignments(tokens):
-
-    '''
-    generate all the port forwards for output registers
-    '''
 
     for i in range(0, len(tokens['vars'])):
         name = tokens['vars'][i]['name']
-        port = tokens['vars'][i]['output_register']
-        if port:
-            tokens['assignments'].append({
-                'name': name,
-                'port': port,
-                'vhdl': '%s <= %s;' % (port, name)
+        port_name = tokens['vars'][i]['output_register']
+        if port_name:
+            log(PROCESSOR, INFO, 'output register found in vars list: "%s"' % port_name)
+            for port_signal in tokens['ports']['signals']:
+                if port_signal['name'] == port_name:
+                    tokens['assignments'].append({
+                        'name': name,
+                        'port': port_name,
+                        'vhdl': '%s_%s <= %s_s;' % (port_name, dir_lut[port_signal['direction']], name)
+                    })
+
+    return tokens
+
+def process_vars(tokens):
+
+    #tokens = pre_process_ports(tokens)
+    
+    for i in range(0, len(tokens['vars'])):
+        name = tokens['vars'][i]['name']
+        type_ = tokens['vars'][i]['type']
+        left = tokens['vars'][i]['left']
+        right = tokens['vars'][i]['right']
+        if type_ == 'std_logic':
+            tokens['vars'][i]['vhdl'] = '%s_s : std_logic;' % name
+        elif type_ == 'std_logic_vector':
+            tokens['vars'][i]['vhdl'] = "%s_s : std_logic_vector(%s downto %s);" % (name, left, right)
+        else:
+            # todo: throw error
+            pass
+
+    return tokens
+
+def process_components(tokens, lib_dirs):
+
+    '''
+    casualhdl will go and process all of the components that are used in
+    the file.
+    '''   
+
+    components = []
+
+    for i in range(0, len(tokens['components'])):
+        component = tokens['components'][i]
+        filename = filename_from_component(component)
+
+        for lib_dir in lib_dirs:
+            full_filename = '%s/%s' % (lib_dir, filename)
+            if os.path.isfile(full_filename):
+
+                _tokens = process(full_filename)       
+
+                components.append({
+                    'name': component['name'],
+                    'entity': _tokens['entity'],
+                    'library': _tokens['library'],
+                    'ports': _tokens['ports'],
+                })
+
+                tokens['components'][i]['ports'] = _tokens['ports']
+
+
+    for component in components:
+
+        #
+        # todo: support multiple resets and clocks
+        #
+
+        for signal in component['ports']['signals']:
+            #signal_name = '_'.join(signal['name'].split('_')[:-1])
+            tokens['vars'].append({
+                'name': '%s_%s' % (component['name'], signal['name']),
+                'type': signal['type'], 
+                'left': signal['left'],
+                'right': signal['right'],
+                'output_register': None, 
+                'vhdl': '',
             })
+
+    #print(json.dumps(components, indent=4))
+
+    #print(json.dumps(tokens, indent=4))
+
+    #if len(components) != 0:
+    #    raise Exception('debug')
 
     return tokens
 
@@ -939,12 +709,9 @@ def process(filename):
         './lib',
     ]
 
-    # get the tokenized verion of the file
-    tokens = tokenize(filename)
+    tokens = pre_process(filename)
 
     tokens = process_components(tokens, lib_dirs)
-
-    tokens = process_ports(tokens)
 
     tokens = process_vars(tokens)
 
@@ -954,14 +721,16 @@ def process(filename):
 
     end = time.time()
 
-    #log(PROCESSOR, DEBUG, 'tokens:\n%s' % json.dumps(tokens, indent=4))
-
     log(PROCESSOR, INFO, 'processing finished in %.6f seconds' % (end-start) )
+
+    #log(PROCESSOR, DEBUG, 'tokens:\n%s'  % json.dumps(tokens, indent=4))
 
     return tokens
 
 if __name__ == '__main__':
 
-    tokens = process('counter32.chdl')
+    filename = sys.argv[1]    
+
+    tokens = process(filename)
 
     print(json.dumps(tokens, indent=4))

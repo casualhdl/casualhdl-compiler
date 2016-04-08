@@ -11,9 +11,6 @@ end <<entity_name>>;
 
 architecture behavioral of <<entity_name>> is
 
-    -- components
-<<components>>
-
     -- signals
 <<signals>>
 

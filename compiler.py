@@ -15,24 +15,11 @@ import time
 
 from processor import process
 
-class Stack:
-     def __init__(self):
-         self.items = []
-
-     def isEmpty(self):
-         return self.items == []
-
-     def push(self, item):
-         self.items.append(item)
-
-     def pop(self):
-         return self.items.pop()
-
-     def peek(self):
-         return self.items[len(self.items)-1]
-
-     def size(self):
-         return len(self.items)
+dir_lut = {
+    'in': 'i',
+    'out': 'o',
+    'inout': 'io',
+}
 
 def make_indent(indent):
     retval = ''
@@ -46,26 +33,33 @@ def read_template():
     return template
 
 def compile_ports(tokens):
+
+    dir_lut = {
+        'in': 'i',
+        'out': 'o',
+        'inout': 'io',
+    }
+
     HEADER = '        '
     vhdl = '    port (\n\n'
     for clock in tokens['ports']['clocks']:
         vhdl += '%s-- clock\n' % HEADER
-        vhdl += '%s%s : in std_logic;\n\n' % (HEADER, clock['name'])
+        vhdl += '%s%s_i : in std_logic;\n\n' % (HEADER, clock['name'])
     for reset in tokens['ports']['resets']:
         vhdl += '%s-- reset\n' % HEADER
-        vhdl += '%s%s : in std_logic;\n\n' % (HEADER, reset['name'])
+        vhdl += '%s%s_i : in std_logic;\n\n' % (HEADER, reset['name'])
     vhdl += '%s-- interface ports\n' % HEADER
     for signal in tokens['ports']['signals']:
         name = signal['name']
         signal_type = signal['type']
         direction = signal['direction']
         if signal_type == 'std_logic':
-            vhdl += '%s%s : %s std_logic;\n' % (HEADER, name, direction)
+            vhdl += '%s%s_%s : %s std_logic;\n' % (HEADER, name, dir_lut[direction], direction)
         elif signal_type == 'std_logic_vector':
             #direction = signal['direction']
             left = signal['left']
             right = signal['right']
-            vhdl += "%s%s : %s std_logic_vector(%s downto %s);\n" % (HEADER, name, direction, left, right)
+            vhdl += "%s%s_%s : %s std_logic_vector(%s downto %s);\n" % (HEADER, name, dir_lut[direction], direction, left, right)
         else:
             # todo: throw error
             pass
@@ -94,29 +88,22 @@ def compile_instantiations(tokens):
         
         _vhdl += '\n%s-- clocks\n' % make_indent(2)
         if len(tokens['components'][i]['ports']['clocks']) != 0:
-            _vhdl += '%s%s => %s,\n' % (make_indent(2), tokens['components'][i]['ports']['clocks'][0]['name'], tokens['ports']['clocks'][0]['name'])
+            _vhdl += '%s%s_i => %s_i,\n' % (make_indent(2), tokens['components'][i]['ports']['clocks'][0]['name'], tokens['ports']['clocks'][0]['name'])
         
         _vhdl += '\n%s-- resets\n' % make_indent(2)
         if len(tokens['components'][i]['ports']['resets']) != 0:
-            _vhdl += '%s%s => %s,\n' % (make_indent(2), tokens['components'][i]['ports']['resets'][0]['name'], tokens['ports']['resets'][0]['name'])
+            _vhdl += '%s%s_i => %s_i,\n' % (make_indent(2), tokens['components'][i]['ports']['resets'][0]['name'], tokens['ports']['resets'][0]['name'])
         
         _vhdl += '\n%s-- interface ports\n' % make_indent(2)
         for signal in tokens['components'][i]['ports']['signals']:
             signal_name = signal['name']
-            signal_signal_name = '%s_%s_s' % (tokens['components'][i]['name'], '_'.join(signal['name'].split('_')[:-1]))
-            _vhdl += '%s%s => %s,\n' % (make_indent(2), signal_name, signal_signal_name)
+            signal_signal_name = '%s_%s_s' % (tokens['components'][i]['name'], signal['name'])
+            _vhdl += '%s%s_%s => %s,\n' % (make_indent(2), signal_name, dir_lut[signal['direction']], signal_signal_name)
         # need to get ride of the last comma
         _vhdl = '%s\n' % _vhdl[:-2]
         _vhdl += '\n%s);\n\n' % make_indent(1)
 
         tokens['components'][i]['vhdl'] = _vhdl
-
-        #print _vhdl
-
-
-
-    #print(json.dumps(tokens, indent=4))
-    #raise Exception('debug')
 
     return tokens
 
@@ -129,9 +116,9 @@ def compile_sync_proceedure(i, tokens):
     reset = tokens['procedures'][i]['reset']['name']
 
     _vhdl = ''
-    _vhdl += '%s%s: process( %s )\n' % (make_indent(1), name, clock)
+    _vhdl += '%s%s: process( %s_i )\n' % (make_indent(1), name, clock)
     _vhdl += '%sbegin\n' % make_indent(1)
-    _vhdl += '%sif ( rising_edge( %s ) ) then\n%sif ( %s = \'1\' ) then\n\n%s-- reset values\n' % (
+    _vhdl += '%sif ( rising_edge( %s_i ) ) then\n%sif ( %s_i = \'1\' ) then\n\n%s-- reset values\n' % (
         make_indent(2), clock, make_indent(3), reset, make_indent(4)
     )
 
@@ -159,7 +146,7 @@ def compile_sync_proceedure(i, tokens):
     _vhdl += '\n'
     _vhdl += '%s-- process logic\n' % make_indent(4)
     current_indent = -1 # small.
-    stack = Stack()
+
     for j in range(0, len(tokens['procedures'][i]['lines'])):
         _line = tokens['procedures'][i]['lines'][j]
         if 'vhdl' in _line:
@@ -170,20 +157,24 @@ def compile_sync_proceedure(i, tokens):
             command = _line['vhdl']['command']
             is_control_structure = _line['vhdl']['is_control_structure']
 
-            # the processor has placed endif commands after each if control
-            # structure.  we need to deturmine which ones need to be removed
+            # the processor has placed endif commands after each "if", "elsif", and else
+            # control structures.  we need to deturmine which ones need to be removed
             # since we're not done with the control structure tree
 
             if command == 'endif':
                 _num_lines = len(tokens['procedures'][i]['lines'])
                 _indent = current_indent
                 _command = None
+                #print(_num_lines, _indent, _command, len(tokens['procedures'][i]['lines']), )
                 if (j+1) < len(tokens['procedures'][i]['lines']):
                     _indent = tokens['procedures'][i]['lines'][j+1]['vhdl']['indent']
                     _command = tokens['procedures'][i]['lines'][j+1]['vhdl']['command']
+                    #print('inside0', _command)
                 if _command == 'elsif' or _command == 'else':
+                    #print('inside1')
                     pass
                 else:
+                    #print('inside2')
                     _vhdl += '%send if;\n' % (make_indent(indent+3))
 
             else:
