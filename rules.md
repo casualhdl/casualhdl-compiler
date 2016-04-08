@@ -1,3 +1,35 @@
+# Example file
+
+Below is an eample `.chdl` file.  It is an 8 bit counter with a 
+configurable max, counter reset, and done assertion.
+
+    library chdl.basic
+    entity counter16
+
+    port clk = clock()
+    port reset = reset()    
+    port reset_count = logic()
+    port max = vector(7, 0)
+    port done = logic()
+
+    var count = vector(7, 0)
+
+    proc counter_decode = sync(clk, reset):
+        reset:
+            count = zeros
+            done = 0
+
+        done = 0
+
+        if reset_count = 1:
+            count = zeros
+        elsif count = max:
+            done = 1
+        else:
+            count++
+
+# Casual HDL rules
+
 
 ## comments
 
