@@ -272,7 +272,7 @@ def decode_value(value, name, tokens):
     val = ''
     if signal['type'] == 'std_logic':
         val = "'%s'" % value 
-        #raise Exception('bit')
+        #raise Exception('logic')
     elif signal['type'] == 'std_logic_vector':
 
         # binary value

@@ -12,10 +12,9 @@ component chdl.basic.counter32 as low_counter
 
 port clk = clock()
 port reset = reset()
-# port enable = bit()
 port high_time = vector(31, 0)
 port low_time = vector(31, 0)
-port output = bit()
+port output = logic()
 
 var state = vector(1, 0)
 

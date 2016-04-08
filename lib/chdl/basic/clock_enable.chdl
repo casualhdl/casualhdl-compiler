@@ -12,7 +12,7 @@ entity clock_enable
 port clk = clock()
 port reset = reset()
 port enable_count = vector(31, 0)
-port ce = bit()
+port ce = logic()
 
 var count = vector(31, 0)
 

@@ -96,7 +96,7 @@ def tokenize(filename, verbose=False):
             log(TOKENIZER, INFO, "found entity: '%s'" % parts[1])
 
         elif cmd == 'port':
-            # port pulse = bit()
+            # port pulse = logic()
             # port count_max = vector()
             # port count_max = vector(31, 0)
             if len(parts) >= 4:
@@ -128,7 +128,7 @@ def tokenize(filename, verbose=False):
                             'name': name, #'%s_i' % name,
                             'vhdl': '',
                         })
-                elif rest_parts[0] == 'bit':
+                elif rest_parts[0] == 'logic':
                     if len(rest_parts) == 1:
                         # todo: throw error
                         pass
@@ -200,7 +200,7 @@ def tokenize(filename, verbose=False):
                 equals = parts[2]
                 rest = ' '.join(parts[3:])
                 rest_parts = rest.replace(' ','').split('(')
-                if rest_parts[0] == 'bit':
+                if rest_parts[0] == 'logic':
                     if len(rest_parts) == 1:
                         # todo: throw error
                         pass

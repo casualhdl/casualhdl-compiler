@@ -9,9 +9,9 @@ entity counter16
 
 port clk = clock()
 port reset = reset()    
-port reset_count = bit()
+port reset_count = logic()
 port max = vector(15, 0)
-port done = bit()
+port done = logic()
 
 var count = vector(15, 0)
 
