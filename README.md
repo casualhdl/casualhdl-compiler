@@ -75,3 +75,4 @@ Here is the VHDL that it creates.  Note the derived default for `count_s`.
         end process;
     end behavioral; 
     
+More info within rules.md
