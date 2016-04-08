@@ -17,13 +17,13 @@ var count = vector(31, 0)
 
 proc counter_decode = sync(clk, reset):
     reset:
-        count = zeros
+        count = 0
         done = 0
 
     done = 0
 
     if reset_count = 1:
-        count = zeros
+        count = 0
     elsif count = max:
         done = 1
     else:
