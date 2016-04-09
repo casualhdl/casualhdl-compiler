@@ -178,6 +178,8 @@ def compile_sync_proceedure(i, tokens):
                     _vhdl += '%send if;\n' % (make_indent(indent+3))
 
             else:
+                if command == 'fsm':
+                    pass
                 _vhdl += '%s%s\n' % (make_indent(indent+3), vhdl)
 
             
@@ -238,7 +240,10 @@ def populate_template(tokens):
     components = ''
     signals = ''
     for signal in tokens['vars']:
-        signals += '%ssignal %s\n' % (HEADER, signal['vhdl'])
+        if signal['type'] == 'state':
+            signals += '%s%s\n' % (HEADER, signal['vhdl'])
+        else:
+            signals += '%ssignal %s\n' % (HEADER, signal['vhdl'])
     assignments = ''
     for assignment in tokens['assignments']:
         assignments = '%s%s\n' % (HEADER, assignment['vhdl'])

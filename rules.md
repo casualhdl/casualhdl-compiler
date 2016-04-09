@@ -208,7 +208,7 @@ same state machine as above looks like ...
     proc state_machine = sync(clk, reset):
         reset:
             state = idle
-        fsm:
+        fsm state_machine:
             idle:
                 #
             wait_for_thing:

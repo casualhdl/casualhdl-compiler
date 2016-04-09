@@ -146,16 +146,23 @@ def parse_assignment(line, tokens):
                 signal_name = '%s_%s ' % (parts[0], parts[1])
             vhdl += '%s_s(%s downto %s) ' % (signal_name, left, right)
 
-        # signal
+        # signal or port, or a or state
         else:
-            log(PROCESSOR, DEBUG, '\t\t\tvalue is signal or port')
-            signal_name = _value
-            if '.' in value:
-                parts = _value.split('.')
-                signal_name = '%s_%s ' % (parts[0], parts[1])
-            
-        
-            vhdl += '%s ' % signal_name
+
+            is_signal_or_port = False
+
+            if get_port_signal_from_name(value, tokens) or get_var_from_name(value, tokens):
+                is_signal_or_port = True
+
+            if is_signal_or_port:
+                log(PROCESSOR, DEBUG, '\t\t\tvalue is signal or port')
+                signal_name = _value
+                if '.' in value:
+                    parts = _value.split('.')
+                    signal_name = '%s_%s ' % (parts[0], parts[1])
+                vhdl += '%s ' % signal_name
+            else:
+                vhdl += '%s ' % value
 
     # remove last space, and put semi colon at end of line
     vhdl = '%s_s <= %s;' % (subject, vhdl[:-1])
@@ -231,6 +238,17 @@ def get_port_signal_from_name(name, tokens):
 
     return signal_name
 
+def get_var_from_name(name, tokens):
+
+    signal_name = None
+    for signal in tokens['vars']:
+        if signal['name'] == name:
+            signal_name = '%s_s' % name
+            break
+
+    return signal_name
+
+
 def decode_value(value, name, tokens):
 
     signal = None
@@ -255,7 +273,7 @@ def decode_value(value, name, tokens):
 
     if not signal:
         log(PROCESSOR, DEBUG, '\tvalue could not be decoded')
-        log(PROCESSOR, DEBUG, '\tvars: %s' % json.dumps(tokens['vars'], indent=4))
+        #log(PROCESSOR, DEBUG, '\tvars: %s' % json.dumps(tokens['vars'], indent=4))
         return None
 
     #if not signal:
@@ -380,6 +398,9 @@ def process_lines(index, indent, procedure_index, tokens):
                 line_number = _line['line_number']
                 reset_line_indent = get_indent(line)
 
+                if line.strip() == '':
+                    continue
+
                 subject, value = parse_reset_assignment(line, tokens)
 
                 #decoded_value = get_port_signal_from_name(subject, tokens)
@@ -502,8 +523,150 @@ def process_lines(index, indent, procedure_index, tokens):
 
         # fsm control structure
         elif '    fsm ' in line:
+            
+            '''
+            fsm <state_machine_name>:
+                <state_0>:
+                    <contents>
+                <state_1>:
+                    <contents>
+                
+                ...
+
+                <state_n>:
+                    <contents>
+            '''
+
             log(PROCESSOR, INFO, '"fsm" control structure found')
-            pass
+
+            state_signal_name = line.strip().split(':')[0].split(' ')[1].strip()
+            
+            _vhdl = 'case %s_s is' % state_signal_name
+
+            tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                    'command': 'fsm',
+                    'indent': line_indent,
+                    'is_control_structure': False,
+                    'vhdl': _vhdl,
+                }
+
+            tokens['vars'].append({
+                'name': state_signal_name, #'%s_s' % name,
+                'type': 'state',
+                'left': None,
+                'right': None,
+                'output_register': None,
+            })
+            state_var_index = len(tokens['vars'])-1
+
+            states = []
+            while(True):
+
+                # go to next line
+                i += 1
+
+                _line = lines[i]
+                line = _line['line']
+                line_number = _line['line_number']
+                fsm_line_indent = get_indent(line)
+
+                if line.strip() == '':
+                    continue;
+
+                when_name = line.split(':')[0].strip()
+
+                log(PROCESSOR, INFO, 'fsm state name: "%s"' % when_name)
+
+                _vhdl = 'when %s =>' % when_name
+                states.append(when_name)
+
+                tokens['procedures'][procedure_index]['lines'][i]['vhdl'] = {
+                    'command': 'if',
+                    'indent': fsm_line_indent,
+                    'is_control_structure': False,
+                    'vhdl': _vhdl,
+                }
+
+                i, tokens = process_lines(i+1, fsm_line_indent+1, procedure_index, tokens)
+
+                if i+1 == len(lines):
+                    # all done?
+                    #print(json.dumps(tokens, indent=4))
+                    #raise Exception('all done with file within fsm decode? `if i+1 == len(lines):`')
+                    break;
+
+                next_indent = get_indent(lines[i+1]['line'])
+
+                if next_indent == 0:
+                    # end of file?
+                    #print(json.dumps(tokens, indent=4))
+                    #raise Exception('done with state machine? `if next_indent == 0:`')
+                    break;
+
+                elif next_indent+1 == fsm_line_indent:
+                    # it's the next state
+                    
+                    log(PROCESSOR, DEBUG, 'fms next state found')
+
+                    i += 1
+
+                    _line = lines[i]
+                    line = _line['line']
+                    line_number = _line['line_number']
+                    fsm_line_indent = get_indent(line)
+
+                    when_name = line.split(':')[0].strip()
+
+                    log(PROCESSOR, DEBUG, 'line: "%s", state name: "%s"' % (line, when_name))                    
+
+                    _vhdl = 'when %s =>' % when_name
+
+                    # insert the next when case
+                    tokens['procedures'][procedure_index]['lines'].insert(i+1, {
+                        'line_number': -1,
+                        'line': '',
+                        'vhdl': {
+                            'command': 'when',
+                            'indent': fsm_line_indent,
+                            'is_control_structure': False,
+                            'vhdl': _vhdl
+                        }
+                    })
+
+                elif next_indent+2 == fsm_line_indent:
+                    #print(json.dumps(tokens, indent=4))
+                    #raise Exception('done with state machine? `next_indent+2 == fsm_line_indent:`')
+                    break
+
+            tokens['vars'][state_var_index]['states'] = states
+
+            log(PROCESSOR, DEBUG, 'done with finite state machine: %s' % state_signal_name)
+
+            # insert the end of the case statement
+            tokens['procedures'][procedure_index]['lines'].insert(i+1, {
+                'line_number': -1,
+                'line': '',
+                'vhdl': {
+                    'command': 'endcase',
+                    'indent': line_indent,
+                    'is_control_structure': False,
+                    'vhdl': 'end case;'
+                }
+            })
+
+            # insert the end of the case statement
+            tokens['procedures'][procedure_index]['lines'].insert(i+1, {
+                'line_number': -1,
+                'line': '',
+                'vhdl': {
+                    'command': 'others',
+                    'indent': line_indent+1,
+                    'is_control_structure': False,
+                    'vhdl': 'when others => null;'
+                }
+            })
+
+            i += 1 
 
         # assignment
         elif len(line.split(' = ')) != 1:
@@ -630,17 +793,28 @@ def process_vars(tokens):
     #tokens = pre_process_ports(tokens)
     
     for i in range(0, len(tokens['vars'])):
-        name = tokens['vars'][i]['name']
-        type_ = tokens['vars'][i]['type']
-        left = tokens['vars'][i]['left']
-        right = tokens['vars'][i]['right']
-        if type_ == 'std_logic':
-            tokens['vars'][i]['vhdl'] = '%s_s : std_logic;' % name
-        elif type_ == 'std_logic_vector':
-            tokens['vars'][i]['vhdl'] = "%s_s : std_logic_vector(%s downto %s);" % (name, left, right)
-        else:
-            # todo: throw error
-            pass
+        if not 'vhd' in tokens['vars'][i]:
+            name = tokens['vars'][i]['name']
+            type_ = tokens['vars'][i]['type']
+            left = tokens['vars'][i]['left']
+            right = tokens['vars'][i]['right']
+            if type_ == 'std_logic':
+                tokens['vars'][i]['vhdl'] = '%s_s : std_logic;' % name
+            elif type_ == 'std_logic_vector':
+                tokens['vars'][i]['vhdl'] = "%s_s : std_logic_vector(%s downto %s);" % (name, left, right)
+            elif type_ == 'state':
+                _vhdl  = 'type %s_t is (\n' % name
+                for state in tokens['vars'][i]['states']:
+                    _vhdl += '        %s,\n' % state
+                _vhdl = '%s\n' % _vhdl[:-2]
+                _vhdl += '    );\n'
+                _vhdl += '    signal %s_s : %s_t;' % (name, name)
+                tokens['vars'][i]['vhdl'] = _vhdl
+                #print _vhdl
+                #raise Exception('debug')
+            else:
+                # todo: throw error
+                pass
 
     return tokens
 
@@ -717,13 +891,15 @@ def process(filename):
 
     tokens = process_procedures(tokens)
 
+    tokens = process_vars(tokens)
+
     tokens = process_assignments(tokens)
 
     end = time.time()
 
     log(PROCESSOR, INFO, 'processing finished in %.6f seconds' % (end-start) )
 
-    #log(PROCESSOR, DEBUG, 'tokens:\n%s'  % json.dumps(tokens, indent=4))
+    log(PROCESSOR, DEBUG, 'tokens:\n%s'  % json.dumps(tokens, indent=4))
 
     return tokens
 
